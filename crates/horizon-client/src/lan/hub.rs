@@ -623,6 +623,26 @@ impl Hub {
             },
         }));
     }
+    fn apply_belumi_action(&mut self, action: crate::belumi_hooks::BelumiAction) {
+        use crate::belumi_hooks::BelumiAction as A;
+        match action {
+            A::Broadcast(text) => {
+                log::info!("[belumi] broadcast: {text}");
+                self.system_message(literal(&text));
+            }
+            A::Message { uuid, text } => {
+                log::info!("[belumi] message to {}: {text}", horizon_protocol::crypto::uuid_string(uuid));
+                self.system_message_to_player(uuid, literal(&text));
+            }
+            A::Kick { uuid, reason } => {
+                if let Some(conn) = self.guests.iter().find(|g| g.uuid == uuid).map(|g| g.conn) {
+                    log::info!("[belumi] kick: {reason}");
+                    self.kick(conn, literal(&reason));
+                }
+            }
+        }
+    }
+
     /// Disconnect a guest with a reason (ServerGamePacketListenerImpl.disconnect).
     pub fn kick(&mut self, conn: u32, reason: Tag) {
         // The log's "lost connection" line gives the reason, as vanilla's.
@@ -691,6 +711,10 @@ impl Hub {
         guest.position = ctx.spawn;
         guest.previous_position = ctx.spawn;
         guest.dimension = self.config.dimension.clone();
+        crate::belumi_hooks::emit(crate::belumi_hooks::BelumiEvent::PlayerJoin {
+            uuid: guest.uuid,
+            name: &guest.name,
+        });
         self.guests.push(guest);
         conn
     }
@@ -978,12 +1002,11 @@ impl Hub {
         let packet = match &self.sync.commands {
             Some(tree) => {
                 let dedicated = self.config.dedicated && !self.config.integrated;
-                tree.packet_with(
-                    g.permission,
-                    dedicated,
-                    &self.sync.builtin,
+                let extra = crate::belumi_hooks::merge_commands(
                     &self.mod_commands.0,
-                )
+                    crate::belumi_hooks::command_tree(),
+                );
+                tree.packet_with(g.permission, dedicated, &self.sync.builtin, &extra)
             }
             None => play::Commands {
                 nodes: vec![play::CommandNode {
@@ -1175,6 +1198,10 @@ impl Hub {
     /// packets queued for its own level's pass.
     pub fn poll(&mut self, ctx: &mut TickCtx) -> Vec<HostEvent> {
         self.ticks += 1;
+        for action in crate::belumi_hooks::sync(self.guests.len()) {
+            self.apply_belumi_action(action);
+        }
+        crate::belumi_hooks::emit(crate::belumi_hooks::BelumiEvent::Tick(self.ticks as u64));
         let mut events = Vec::new();
         for event in self.lan.poll() {
             match event {
@@ -1336,6 +1363,10 @@ impl Hub {
 
     fn remove_guest(&mut self, i: usize, reason: &str) -> Guest {
         let mut g = self.guests.remove(i);
+        crate::belumi_hooks::emit(crate::belumi_hooks::BelumiEvent::PlayerQuit {
+            uuid: g.uuid,
+            name: &g.name,
+        });
         if g.left_reason.is_empty() {
             g.left_reason = reason.to_owned();
         }

@@ -189,6 +189,12 @@ impl Hub {
         if !self.try_handle_chat(i, &c.message, false) {
             return;
         }
+        if crate::belumi_hooks::emit(crate::belumi_hooks::BelumiEvent::Chat {
+            uuid: self.guests[i].uuid,
+            message: &c.message,
+        }) {
+            return;
+        }
         let (enforce, now) = (self.enforces_secure_chat(), now_millis());
         let body = Body {
             content: &c.message,

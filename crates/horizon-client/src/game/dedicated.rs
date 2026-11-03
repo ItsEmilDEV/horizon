@@ -545,6 +545,8 @@ impl Game<'_> {
         // This thread ticks the server (MinecraftServer.spin's priority).
         horizon_threads::favour_current();
         self.join_world_rest()?;
+        horizon_client::belumi_hooks::init_plugins(&std::env::current_dir()?.join("plugins"));
+        horizon_client::belumi_hooks::emit(horizon_client::belumi_hooks::BelumiEvent::ServerStart);
         let Setup {
             props,
             universe,
@@ -1502,6 +1504,7 @@ impl Game<'_> {
         // The close request starts before player and world saves.
         self.native_lifecycle.begin_close();
         log("INFO", "Stopping server");
+        horizon_client::belumi_hooks::emit(horizon_client::belumi_hooks::BelumiEvent::ServerStop);
         log("INFO", "Saving players");
         if let Some(host) = self.lan.take() {
             for g in &host.hub.guests {

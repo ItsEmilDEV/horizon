@@ -604,17 +604,20 @@ impl Game<'_> {
     /// Advance every mob one tick, then apply their events.
     pub(super) fn tick_creatures(&mut self) -> Result<()> {
         self.attack_ticks = self.attack_ticks.saturating_add(1);
-        self.tick_leads();
-        self.spawn_natural();
+        use horizon_client::spans::time;
+        time("creatures.leads", || self.tick_leads());
+        time("creatures.spawn_natural", || self.spawn_natural());
         // ServerChunkCache.tickChunks: the custom spawners tick only with spawn_mobs.
         if self.ui.rules.bool("spawn_mobs") {
-            self.tick_wandering_trader();
-            self.tick_patrol_spawner();
-            self.tick_cat_spawner();
-            self.tick_village_siege();
+            time("creatures.spawners", || {
+                self.tick_wandering_trader();
+                self.tick_patrol_spawner();
+                self.tick_cat_spawner();
+                self.tick_village_siege();
+            });
         }
-        self.tick_raids();
-        self.tick_creature_entities()
+        time("creatures.raids", || self.tick_raids());
+        time("creatures.entities", || self.tick_creature_entities())
     }
     /// `DistanceManager.inEntityTickingRange` in an entity-ticking chunk
     /// (block coordinates), from every player's tickets (`update_chunk_tickets`).

@@ -92,6 +92,9 @@ impl Game<'_> {
         if !host.hub.try_handle_chat(i, command, true) {
             return;
         }
+        if horizon_client::belumi_hooks::command(host.hub.guests[i].uuid, command) {
+            return;
+        }
         let permission = host.hub.guests[i].permission;
         if host.hub.enforces_secure_chat()
             && !self.signable_arguments(permission, command).is_empty()
@@ -131,6 +134,9 @@ impl Game<'_> {
             && host.hub.try_handle_chat(i, &p.command, true)
         {
             ran = true;
+            if horizon_client::belumi_hooks::command(host.hub.guests[i].uuid, &p.command) {
+                return;
+            }
             let permission = host.hub.guests[i].permission;
             let parsed = self.signable_arguments(permission, &p.command);
             match host

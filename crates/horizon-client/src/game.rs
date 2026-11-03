@@ -279,6 +279,7 @@ use horizon_client::{
     models,
     motion::{MotionEvent, MotionResources, MotionWorld, PlayerMotion},
     mouse::{LookOptions, MouseLook},
+    net::ProtocolSelection,
     particles::Particle,
     save::{Level, Persistent, SaveDir},
     settings::Settings,
@@ -360,6 +361,7 @@ struct Options {
     window_size: [u32; 2],
     /// Multiplayer: `--server HOST[:PORT]` joins at start; `--name` is the offline player name.
     server: Option<String>,
+    protocol: ProtocolSelection,
     /// `--name`, `HORIZON_PLAYER_NAME` or the signed-in account's name; else
     /// [`Options::player_name`] uses the kept offline name.
     player_name: Option<String>,
@@ -499,6 +501,7 @@ impl Options {
                 .ok()
                 .and_then(|v| v.parse().ok()),
             server: None,
+            protocol: ProtocolSelection::Auto,
             player_name: std::env::var("HORIZON_PLAYER_NAME")
                 .ok()
                 .filter(|n| !n.is_empty()),
@@ -519,6 +522,7 @@ impl Options {
             session_file: std::env::var("HORIZON_SESSION_FILE").ok(),
             session_stdin: false,
         };
+        let mut protocol = None;
         while let Some(arg) = args.next() {
             match arg.as_str() {
                 "--help" | "-h" => {
@@ -616,6 +620,9 @@ impl Options {
                                 o.benchmark = Some(value);
                             }
                             "--server" | "--quickPlayMultiplayer" => o.server = Some(value),
+                            "--protocol" => {
+                                protocol = Some(ProtocolSelection::parse(&value)?);
+                            }
                             "--name" => o.player_name = Some(value),
                             "--session-file" => o.session_file = Some(value),
                             "--control-socket" => o.control = Some(value.into()),
@@ -641,6 +648,10 @@ impl Options {
                 }
             }
         }
+        o.protocol = match protocol {
+            Some(protocol) => protocol,
+            None => ProtocolSelection::from_env()?.unwrap_or_default(),
+        };
         Ok(Some(o))
     }
 }
@@ -9648,16 +9659,17 @@ impl Game<'_> {
         .collect()
     }
     fn tick_mobs(&mut self) -> Result<()> {
-        self.tick_creatures()?;
+        use horizon_client::spans::time;
+        time("mobs.creatures", || self.tick_creatures())?;
         self.position_rider();
-        self.tick_stats();
-        self.tick_scoreboard();
+        time("mobs.stats", || self.tick_stats());
+        time("mobs.scoreboard", || self.tick_scoreboard());
         self.load_bossbars();
-        self.tick_functions();
+        time("mobs.functions", || self.tick_functions());
         self.tick_worldborder();
         self.tick_subtitles();
-        self.spawn_phantoms();
-        self.tick_advancements();
+        time("mobs.phantoms", || self.spawn_phantoms());
+        time("mobs.advancements", || self.tick_advancements());
         self.tick_player_model();
         Ok(())
     }
@@ -13658,12 +13670,12 @@ impl ApplicationHandler for Game<'_> {
         let size = self.options.window_size.map(f64::from);
         self.fullscreen = horizon_client::window::FullscreenState::new(fullscreen);
         let attributes = Window::default_attributes()
-            .with_title("Horizon")
+            .with_title("Belumi")
             .with_window_icon(horizon_client::window::icon());
         // Wayland names the window by its app id, which the horizon.desktop entry matches.
         #[cfg(target_os = "linux")]
         let attributes = winit::platform::wayland::WindowAttributesExtWayland::with_name(
-            attributes, "horizon", "horizon",
+            attributes, "belumi", "belumi",
         );
         let window = match event_loop.create_window(
             attributes
@@ -16322,12 +16334,12 @@ impl Loading {
             .map(f64::from);
         self.fullscreen = horizon_client::window::FullscreenState::new(fullscreen);
         let attributes = Window::default_attributes()
-            .with_title("Horizon")
+            .with_title("Belumi")
             .with_window_icon(horizon_client::window::icon());
         // Wayland names the window by its app id, which the horizon.desktop entry matches.
         #[cfg(target_os = "linux")]
         let attributes = winit::platform::wayland::WindowAttributesExtWayland::with_name(
-            attributes, "horizon", "horizon",
+            attributes, "belumi", "belumi",
         );
         let window = match event_loop.create_window(
             attributes
@@ -16711,7 +16723,7 @@ pub fn run() -> Result<()> {
         horizon_threads::catch_stop_signals();
     }
     let started = Instant::now();
-    horizon_client::spans::enable(options.spikes.is_some());
+    horizon_client::spans::enable(options.spikes.is_some() || horizon_client::belumi_profile::enabled());
     let vanilla_root = options.resources.clone();
     if let Some(error) = missing_resources(&vanilla_root) {
         // The game build started by hand (the release's zip), not by the

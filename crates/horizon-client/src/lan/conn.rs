@@ -813,8 +813,7 @@ fn login_and_configure(
             data: {
                 let mut w = horizon_protocol::buf::Writer::new();
                 // MinecraftServer.getServerModName: "vanilla" there; a modded
-                // server names itself, and Horizon's says "horizon", as its client does.
-                w.string("horizon");
+                w.string(horizon_protocol::BRAND);
                 w.data
             },
         }),
@@ -863,7 +862,7 @@ fn login_and_configure(
     };
     // A Horizon client hears that this server runs its mods' quiet commands
     // (horizon_protocol::quiet); a vanilla one is told nothing.
-    if brand == "horizon" {
+    if horizon_protocol::is_horizon_brand(&brand) {
         send(
             c,
             cfg::Clientbound::CustomPayload(cfg::CustomPayload {
@@ -872,7 +871,7 @@ fn login_and_configure(
             }),
         )?;
     }
-    if brand == "horizon"
+    if horizon_protocol::is_horizon_brand(&brand)
         && let Some(hash) = sync.content_identity
     {
         send(

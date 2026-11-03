@@ -88,6 +88,61 @@ impl SlotDisplay {
     pub fn read(r: &mut Reader) -> Result<Self> {
         Self::read_at(r, 0)
     }
+    pub fn read_26_2(r: &mut Reader) -> Result<Self> {
+        Self::read_at_26_2(r, 0)
+    }
+    fn read_at_26_2(r: &mut Reader, depth: u32) -> Result<Self> {
+        if depth > MAX_DEPTH {
+            return Err(crate::Error::new("slot displays nest too deep"));
+        }
+        let inner = |r: &mut Reader| Self::read_at_26_2(r, depth + 1).map(Box::new);
+        Ok(match r.varint()? {
+            0 => Self::Empty,
+            1 => Self::AnyFuel,
+            2 => Self::WithAnyPotion(inner(r)?),
+            3 => {
+                let source = inner(r)?;
+                Self::OnlyWithComponent(source, r.varint()?)
+            }
+            4 => Self::Item(crate::dialect::item_in(r.varint()?)),
+            5 => Self::ItemStack(Template::read_26_2(r)?),
+            6 => Self::Tag(HolderSet::Tag(r.string(32767)?)),
+            7 => Self::Dyed {
+                dye: inner(r)?,
+                target: inner(r)?,
+            },
+            8 => {
+                let base = inner(r)?;
+                let material = inner(r)?;
+                let pattern = match r.varint()? {
+                    0 => TrimPattern::Direct {
+                        asset: r.string(32767)?,
+                        description: r.nbt()?,
+                        decal: r.bool()?,
+                    },
+                    id => TrimPattern::Id(id - 1),
+                };
+                Self::SmithingTrim {
+                    base,
+                    material,
+                    pattern,
+                }
+            }
+            9 => Self::WithRemainder {
+                input: inner(r)?,
+                remainder: inner(r)?,
+            },
+            10 => {
+                let n = r.count(r.remaining())?;
+                let mut out = Vec::with_capacity(n.min(256));
+                for _ in 0..n {
+                    out.push(Self::read_at_26_2(r, depth + 1)?);
+                }
+                Self::Composite(out)
+            }
+            id => return Err(crate::Error::new(format!("unknown slot display {id}"))),
+        })
+    }
     fn read_at(r: &mut Reader, depth: u32) -> Result<Self> {
         if depth > MAX_DEPTH {
             return Err(crate::Error::new("slot displays nest too deep"));
@@ -102,7 +157,7 @@ impl SlotDisplay {
                 Self::OnlyWithComponent(source, r.varint()?)
             }
             4 => Self::Item(r.varint()?),
-            5 => Self::ItemStack(Template::read(r)?),
+            5 => Self::ItemStack(Template::read_26_2(r)?),
             6 => Self::Tag(HolderSet::read(r)?),
             7 => Self::Dyed {
                 dye: inner(r)?,
@@ -214,6 +269,14 @@ fn read_list(r: &mut Reader) -> Result<Vec<SlotDisplay>> {
     }
     Ok(out)
 }
+fn read_list_26_2(r: &mut Reader) -> Result<Vec<SlotDisplay>> {
+    let n = r.count(r.remaining())?;
+    let mut out = Vec::with_capacity(n.min(256));
+    for _ in 0..n {
+        out.push(SlotDisplay::read_26_2(r)?);
+    }
+    Ok(out)
+}
 fn write_list(list: &[SlotDisplay], w: &mut Writer) {
     w.varint(list.len() as i32);
     list.iter().for_each(|d| d.write(w));
@@ -264,6 +327,51 @@ impl RecipeDisplay {
             | Self::Stonecutter { result, .. }
             | Self::Smithing { result, .. } => result,
         }
+    }
+    pub fn read_26_2(r: &mut Reader) -> Result<Self> {
+        let slot = SlotDisplay::read_26_2;
+        Ok(match r.varint()? {
+            0 => Self::Shapeless {
+                ingredients: read_list_26_2(r)?,
+                result: slot(r)?,
+                station: slot(r)?,
+            },
+            1 => {
+                let (width, height) = (r.varint()?, r.varint()?);
+                let ingredients = read_list_26_2(r)?;
+                if i64::from(width) * i64::from(height) != ingredients.len() as i64 {
+                    return Err(crate::Error::new("shaped display size mismatch"));
+                }
+                Self::Shaped {
+                    width,
+                    height,
+                    ingredients,
+                    result: slot(r)?,
+                    station: slot(r)?,
+                }
+            }
+            2 => Self::Furnace {
+                ingredient: slot(r)?,
+                fuel: slot(r)?,
+                result: slot(r)?,
+                station: slot(r)?,
+                duration: r.varint()?,
+                experience: r.f32()?,
+            },
+            3 => Self::Stonecutter {
+                input: slot(r)?,
+                result: slot(r)?,
+                station: slot(r)?,
+            },
+            4 => Self::Smithing {
+                template: slot(r)?,
+                base: slot(r)?,
+                addition: slot(r)?,
+                result: slot(r)?,
+                station: slot(r)?,
+            },
+            id => return Err(crate::Error::new(format!("unknown recipe display {id}"))),
+        })
     }
 }
 impl Codec<RecipeDisplay> for RecipeDisplay {
@@ -427,6 +535,45 @@ impl RecipeBookEntry {
             category,
             requirements,
             flags: r.i8()?,
+        })
+    }
+}
+impl RecipeBookEntry {
+    fn read_26_2(r: &mut Reader) -> Result<Self> {
+        let id = r.varint()?;
+        let display = RecipeDisplay::read_26_2(r)?;
+        let group = r.varint()?;
+        let category = r.varint()?;
+        let requirements = if r.bool()? {
+            let k = r.count(r.remaining())?;
+            let mut list = Vec::with_capacity(k.min(64));
+            for _ in 0..k {
+                list.push(HolderSet::read(r)?);
+            }
+            Some(list)
+        } else {
+            None
+        };
+        Ok(Self {
+            id,
+            display,
+            group,
+            category,
+            requirements,
+            flags: r.i8()?,
+        })
+    }
+}
+impl RecipeBookAdd {
+    pub fn read_26_2(r: &mut Reader) -> Result<Self> {
+        let n = r.count(r.remaining())?;
+        let mut entries = Vec::with_capacity(n.min(4096));
+        for _ in 0..n {
+            entries.push(RecipeBookEntry::read_26_2(r)?);
+        }
+        Ok(Self {
+            entries,
+            replace: r.bool()?,
         })
     }
 }

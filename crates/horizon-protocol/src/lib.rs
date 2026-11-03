@@ -6,6 +6,9 @@ pub mod buf;
 pub mod chunk;
 pub mod connection;
 pub mod crypto;
+pub mod dialect;
+#[rustfmt::skip]
+pub mod dialect_26_2;
 pub mod entity_data;
 pub mod frame;
 pub mod ids;
@@ -78,3 +81,9 @@ impl From<std::io::Error> for Error {
     }
 }
 pub type Result<T> = std::result::Result<T, Error>;
+
+pub const BRAND: &str = "Belumi";
+
+pub fn is_horizon_brand(brand: &str) -> bool {
+    brand == BRAND || brand == "horizon"
+}

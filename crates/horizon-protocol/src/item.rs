@@ -663,15 +663,15 @@ impl Codec<Option<Stack>> for Slot {
             return;
         };
         w.varint(s.count);
-        w.varint(s.item);
+        w.varint(crate::dialect::item_out(s.item));
         w.varint(s.added.len() as i32);
         w.varint(s.removed.len() as i32);
         for (kind, c) in &s.added {
-            w.varint(*kind);
+            w.varint(crate::dialect::component_out(*kind));
             c.write(*kind, w);
         }
         for kind in &s.removed {
-            w.varint(*kind);
+            w.varint(crate::dialect::component_out(*kind));
         }
     }
 }
@@ -684,7 +684,7 @@ fn read_stack(r: &mut Reader, delimited: bool) -> Result<Option<Stack>> {
     if count <= 0 {
         return Ok(None);
     }
-    let item = r.varint()?;
+    let item = crate::dialect::item_in(r.varint()?);
     let positive = r.count(65536)?;
     let negative = r.count(65536)?;
     let mut added = Vec::with_capacity(positive.min(64));
@@ -692,7 +692,7 @@ fn read_stack(r: &mut Reader, delimited: bool) -> Result<Option<Stack>> {
     patch.varint(positive as i32);
     patch.varint(negative as i32);
     for _ in 0..positive {
-        let kind = r.varint()?;
+        let kind = crate::dialect::component_in(r.varint()?);
         let (component, value) = if delimited {
             let len = r.count(r.remaining())?;
             let value = r.bytes(len)?;
@@ -705,7 +705,9 @@ fn read_stack(r: &mut Reader, delimited: bool) -> Result<Option<Stack>> {
         patch.byte_array(value);
         added.push((kind, component));
     }
-    let removed: Vec<i32> = (0..negative).map(|_| r.varint()).collect::<Result<_>>()?;
+    let removed: Vec<i32> = (0..negative)
+        .map(|_| r.varint().map(crate::dialect::component_in))
+        .collect::<Result<_>>()?;
     removed.iter().for_each(|kind| patch.varint(*kind));
     Ok(Some(Stack {
         item,
@@ -714,6 +716,23 @@ fn read_stack(r: &mut Reader, delimited: bool) -> Result<Option<Stack>> {
         removed,
         wire: WirePatch((positive + negative > 0).then(|| patch.data.into())),
     }))
+}
+
+fn remap_wire_patch(patch: &[u8]) -> Option<Vec<u8>> {
+    let mut r = Reader::new(patch);
+    let (positive, negative) = (r.count(65536).ok()?, r.count(65536).ok()?);
+    let mut w = Writer::new();
+    w.varint(positive as i32);
+    w.varint(negative as i32);
+    for _ in 0..positive {
+        w.varint(crate::dialect::component_out(r.varint().ok()?));
+        let len = r.count(r.remaining()).ok()?;
+        w.byte_array(r.bytes(len).ok()?);
+    }
+    for _ in 0..negative {
+        w.varint(crate::dialect::component_out(r.varint().ok()?));
+    }
+    (r.remaining() == 0).then_some(w.data)
 }
 
 /// ItemStack.OPTIONAL_UNTRUSTED_STREAM_CODEC (`SetCreativeModeSlot`): as [`Slot`],
@@ -730,29 +749,61 @@ impl Codec<Option<Stack>> for DelimitedSlot {
             return;
         };
         w.varint(s.count);
-        w.varint(s.item);
+        w.varint(crate::dialect::item_out(s.item));
         if let Some(patch) = &s.wire.0 {
-            w.bytes(patch);
+            if crate::dialect::is_26_2()
+                && let Some(mapped) = remap_wire_patch(patch)
+            {
+                w.bytes(&mapped);
+            } else {
+                w.bytes(patch);
+            }
             return;
         }
         w.varint(s.added.len() as i32);
         w.varint(s.removed.len() as i32);
         for (kind, c) in &s.added {
-            w.varint(*kind);
+            w.varint(crate::dialect::component_out(*kind));
             let mut value = Writer::new();
             c.write(*kind, &mut value);
             w.byte_array(&value.data);
         }
         for kind in &s.removed {
-            w.varint(*kind);
+            w.varint(crate::dialect::component_out(*kind));
         }
     }
 }
 
 /// ItemStackTemplate.STREAM_CODEC: the item, the count, then the patch.
 pub struct Template;
+impl Template {
+    pub fn read_26_2(r: &mut Reader) -> Result<Stack> {
+        let item = crate::dialect::item_in(r.varint()?);
+        let count = r.varint()?;
+        let positive = r.count(65536)?;
+        let negative = r.count(65536)?;
+        let mut added = Vec::with_capacity(positive.min(64));
+        for _ in 0..positive {
+            let kind = crate::dialect::component_in(r.varint()?);
+            added.push((kind, Component::read(kind, r)?));
+        }
+        let removed = (0..negative)
+            .map(|_| r.varint().map(crate::dialect::component_in))
+            .collect::<Result<_>>()?;
+        Ok(Stack {
+            item,
+            count,
+            added,
+            removed,
+            wire: WirePatch::default(),
+        })
+    }
+}
 impl Codec<Stack> for Template {
     fn read(r: &mut Reader) -> Result<Stack> {
+        if crate::dialect::is_26_2() {
+            return Self::read_26_2(r);
+        }
         let item = r.varint()?;
         let count = r.varint()?;
         let positive = r.count(65536)?;
@@ -772,16 +823,16 @@ impl Codec<Stack> for Template {
         })
     }
     fn write(s: &Stack, w: &mut Writer) {
-        w.varint(s.item);
+        w.varint(crate::dialect::item_out(s.item));
         w.varint(s.count);
         w.varint(s.added.len() as i32);
         w.varint(s.removed.len() as i32);
         for (kind, c) in &s.added {
-            w.varint(*kind);
+            w.varint(crate::dialect::component_out(*kind));
             c.write(*kind, w);
         }
         for kind in &s.removed {
-            w.varint(*kind);
+            w.varint(crate::dialect::component_out(*kind));
         }
     }
 }
@@ -831,16 +882,16 @@ impl Codec<Option<Hashed>> for HashedSlot {
     fn write(v: &Option<Hashed>, w: &mut Writer) {
         w.bool(v.is_some());
         if let Some(h) = v {
-            w.varint(h.item);
+            w.varint(crate::dialect::item_out(h.item));
             w.varint(h.count);
             w.varint(h.added.len() as i32);
             for (k, hash) in &h.added {
-                w.varint(*k);
+                w.varint(crate::dialect::component_out(*k));
                 w.i32(*hash);
             }
             w.varint(h.removed.len() as i32);
             for k in &h.removed {
-                w.varint(*k);
+                w.varint(crate::dialect::component_out(*k));
             }
         }
     }

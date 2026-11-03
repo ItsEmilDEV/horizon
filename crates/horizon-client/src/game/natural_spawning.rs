@@ -525,9 +525,16 @@ impl<'a> Game<'a> {
             return;
         }
         let mut scratch = std::mem::take(&mut self.spawn_scratch);
-        let spawnable = self.spawning_chunks(&players, &mut scratch);
+        let spawnable = horizon_client::spans::time("spawn.chunks", || self.spawning_chunks(&players, &mut scratch));
         for &key in &scratch.candidates {
             *self.world.inhabited.entry(key).or_insert(0) += 1;
+        }
+        if !horizon_client::belumi_tuning::spawn_attempts_this_tick(
+            self.world.game_time,
+            horizon_client::belumi_tuning::spawn_interval(),
+        ) {
+            self.spawn_scratch = scratch;
+            return;
         }
         let spawn_mobs = self.ui.rules.bool("spawn_mobs");
         let spawn_enemies = self.ui.rules.bool("spawn_monsters");
@@ -535,6 +542,7 @@ impl<'a> Game<'a> {
         let mut pending = Vec::new();
         {
             let level = self.natural_level();
+            let state_started = horizon_client::spans::start();
             let counted: Vec<Counted> = self
                 .mobs
                 .iter()
@@ -561,6 +569,7 @@ impl<'a> Game<'a> {
             let mut state = SpawnState::new(&level, spawnable, players, &counted, |cx, cz| {
                 self.world.chunks.contains_key(&(cx, cz))
             });
+            horizon_client::spans::stop("spawn.state", state_started);
             let categories = if spawn_mobs {
                 state.filtered_categories(spawn_enemies, self.world.game_time % 400 == 0)
             } else {
@@ -571,6 +580,7 @@ impl<'a> Game<'a> {
                 let j = random.next_int_bound(i as i32 + 1).unwrap_or(0) as usize;
                 scratch.candidates.swap(i, j);
             }
+            let attempts_started = horizon_client::spans::start();
             if !categories.is_empty() {
                 for chunk in scratch.candidates.drain(..) {
                     let mut spawn = |l: &GameLevel, r: &SpawnRequest| {
@@ -591,6 +601,7 @@ impl<'a> Game<'a> {
                     );
                 }
             }
+            horizon_client::spans::stop("spawn.attempts", attempts_started);
         }
         self.world.random = random;
         self.add_spawned(pending, false);

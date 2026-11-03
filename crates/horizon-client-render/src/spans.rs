@@ -42,6 +42,19 @@ pub fn time<T>(name: &'static str, f: impl FnOnce() -> T) -> T {
     SPANS.with(|s| s.borrow_mut().push(Span { name, ms, cpu_ms }));
     out
 }
+#[inline]
+pub fn start() -> Option<(Instant, Option<Duration>)> {
+    ENABLED.load(Ordering::Relaxed).then(|| (Instant::now(), thread_cpu()))
+}
+#[inline]
+pub fn stop(name: &'static str, started: Option<(Instant, Option<Duration>)>) {
+    let Some((at, cpu)) = started else { return };
+    let ms = at.elapsed().as_secs_f32() * 1000.0;
+    let cpu_ms = thread_cpu()
+        .zip(cpu)
+        .map_or(ms, |(end, start)| (end - start).as_secs_f32() * 1000.0);
+    SPANS.with(|s| s.borrow_mut().push(Span { name, ms, cpu_ms }));
+}
 /// The CPU time this thread has used, where the platform tells it: a tick
 /// with more wall time than CPU time waited (for a lock, or for a core on a
 /// busy machine).

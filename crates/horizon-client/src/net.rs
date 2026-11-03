@@ -6,9 +6,13 @@
 //! Online-mode servers need the Microsoft account the launcher signed in
 //! (crate::auth): the login joins the server through the session service and
 //! encrypts the connection (ClientHandshakePacketListenerImpl.handleHello).
+pub mod protocol_compat;
+mod protocol_detect;
+pub use protocol_compat::{ProtocolSelection, ProtocolVersion};
+
 use crate::auth::AuthSession;
 use horizon_protocol::{
-    PROTOCOL_VERSION,
+    PROTOCOL_VERSION, State,
     connection::{ConnReader, ConnWriter, Connection, Counters},
     crypto::{generate_secret, offline_uuid, server_hash},
     packets::{Empty, configuration as cfg, handshake, login, play},
@@ -17,6 +21,7 @@ use horizon_protocol::{
     servers::parse_address,
     text::{Language, plain, translatable},
 };
+use protocol_compat::ProtocolCompat;
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -99,6 +104,7 @@ pub struct Session {
     pub cookies: Cookies,
     /// HORIZON_NET_DEBUG=1 logs every packet sent from the game thread.
     debug: bool,
+    protocol: Arc<Mutex<ProtocolCompat>>,
 }
 impl Session {
     /// Start connecting in the background, as `auth`'s account when there is one.
@@ -109,6 +115,7 @@ impl Session {
         view_distance: i8,
         lang: Arc<Language>,
         resources: PathBuf,
+        protocol: ProtocolSelection,
     ) -> Self {
         Self::start(
             address,
@@ -119,6 +126,7 @@ impl Session {
             None,
             None,
             resources,
+            protocol,
         )
     }
     /// `ConnectScreen.startConnecting` for a `transfer`: the cookies the
@@ -131,6 +139,7 @@ impl Session {
         lang: Arc<Language>,
         cookies: Cookies,
         resources: PathBuf,
+        protocol: ProtocolSelection,
     ) -> Self {
         Self::start(
             address,
@@ -141,6 +150,7 @@ impl Session {
             None,
             Some(cookies),
             resources,
+            protocol,
         )
     }
     /// Join an integrated server through memory (`Connection.connectToLocalServer`).
@@ -160,6 +170,7 @@ impl Session {
             Some(pipe),
             None,
             resources,
+            ProtocolSelection::Native,
         )
     }
     fn start(
@@ -171,11 +182,13 @@ impl Session {
         local: Option<horizon_protocol::connection::Pipe>,
         cookies: Option<Cookies>,
         resources: PathBuf,
+        protocol: ProtocolSelection,
     ) -> Self {
         let (send, events) = channel();
         let writer = Arc::new(Mutex::new(None));
         let configuring = Arc::new(AtomicBool::new(true));
         let counters = Arc::new(Mutex::new(None));
+        let selected_protocol = Arc::new(Mutex::new(ProtocolCompat::native()));
         // Connection.initiateServerboundPlayConnection: a transfer's
         // handshake says so (ClientIntent.TRANSFER).
         let transferred = cookies.is_some();
@@ -183,6 +196,7 @@ impl Session {
         let (thread_writer, thread_counters, thread_cookies) =
             (writer.clone(), counters.clone(), cookies.clone());
         let thread_configuring = configuring.clone();
+        let thread_protocol = selected_protocol.clone();
         let (address_owned, name_owned) = (address.to_owned(), name.to_owned());
         let thread = std::thread::Builder::new()
             .name("horizon-net".into())
@@ -201,6 +215,8 @@ impl Session {
                     &thread_cookies,
                     transferred,
                     &resources,
+                    protocol,
+                    &thread_protocol,
                 );
                 let from_server = result.is_ok();
                 let reason = result.unwrap_or_else(|e| e);
@@ -224,6 +240,7 @@ impl Session {
             counters,
             cookies,
             debug,
+            protocol: selected_protocol,
         }
     }
     /// Everything received since the last poll.
@@ -251,8 +268,10 @@ impl Session {
         if self.configuring.load(Ordering::Relaxed) {
             return;
         }
+        let compat = *self.protocol.lock().unwrap();
+        let body = compat.encode_serverbound(State::Play, &packet.encode());
         if let Some(w) = writer.as_mut()
-            && w.send(&packet.encode()).is_err()
+            && w.send(&body).is_err()
         {
             w.shutdown();
         }
@@ -261,10 +280,17 @@ impl Session {
     pub fn send_pack_status(&self, id: u128, action: i32) {
         let status = cfg::ResourcePackResponse { id, action };
         let mut writer = self.writer.lock().unwrap();
+        let compat = *self.protocol.lock().unwrap();
         let body = if self.configuring.load(Ordering::Relaxed) {
-            cfg::Serverbound::ResourcePack(status).encode()
+            compat.encode_serverbound(
+                State::Configuration,
+                &cfg::Serverbound::ResourcePack(status).encode(),
+            )
         } else {
-            play::Serverbound::ResourcePack(status).encode()
+            compat.encode_serverbound(
+                State::Play,
+                &play::Serverbound::ResourcePack(status).encode(),
+            )
         };
         if let Some(w) = writer.as_mut()
             && w.send(&body).is_err()
@@ -280,10 +306,17 @@ impl Session {
             payload,
         };
         let mut writer = self.writer.lock().unwrap();
+        let compat = *self.protocol.lock().unwrap();
         let body = if self.configuring.load(Ordering::Relaxed) {
-            cfg::Serverbound::CustomClickAction(click).encode()
+            compat.encode_serverbound(
+                State::Configuration,
+                &cfg::Serverbound::CustomClickAction(click).encode(),
+            )
         } else {
-            play::Serverbound::CustomClickAction(click).encode()
+            compat.encode_serverbound(
+                State::Play,
+                &play::Serverbound::CustomClickAction(click).encode(),
+            )
         };
         if let Some(w) = writer.as_mut()
             && w.send(&body).is_err()
@@ -294,9 +327,13 @@ impl Session {
     /// ServerboundAcceptCodeOfConductPacket, sent in configuration.
     pub fn accept_code_of_conduct(&self) {
         let mut writer = self.writer.lock().unwrap();
+        let compat = *self.protocol.lock().unwrap();
+        let body = compat.encode_serverbound(
+            State::Configuration,
+            &cfg::Serverbound::AcceptCodeOfConduct(Empty).encode(),
+        );
         if let Some(w) = writer.as_mut()
-            && w.send(&cfg::Serverbound::AcceptCodeOfConduct(Empty).encode())
-                .is_err()
+            && w.send(&body).is_err()
         {
             w.shutdown();
         }
@@ -438,6 +475,26 @@ fn connection_lost(e: horizon_protocol::Error, lang: &Language) -> String {
     }
 }
 
+fn resolve_compat(
+    selection: ProtocolSelection,
+    host: &str,
+    port: u16,
+    skip_detection: bool,
+    send: &Sender<Event>,
+) -> Result<ProtocolCompat, String> {
+    let version = match selection {
+        ProtocolSelection::Auto if skip_detection => ProtocolVersion::NATIVE,
+        ProtocolSelection::Auto => {
+            status(send, "Checking the server version...");
+            protocol_detect::detect(host, port, protocol_detect::DETECT_TIMEOUT)
+                .map_err(|e| format!("Could not detect the server's protocol: {e}"))?
+        }
+        ProtocolSelection::Native => ProtocolVersion::NATIVE,
+        ProtocolSelection::Explicit(version) => version,
+    };
+    ProtocolCompat::for_version(version).map_err(|e| format!("This server cannot be joined: {e}"))
+}
+
 /// The whole connection. Ok: why it ended for good (the server's reason, or
 /// a refusal no retry fixes); Err: the connection failed.
 fn run(
@@ -454,9 +511,11 @@ fn run(
     cookies: &Cookies,
     transferred: bool,
     resources: &Path,
+    selection: ProtocolSelection,
+    shared_protocol: &Mutex<ProtocolCompat>,
 ) -> Result<String, String> {
-    let (host, port, mut c) = if let Some(pipe) = local {
-        (address.to_owned(), 0, Connection::local(pipe))
+    let (host, port, local, relayed) = if let Some(pipe) = local {
+        (address.to_owned(), 0, Some(pipe), false)
     } else {
         let (host, port) = match address.strip_prefix(FRIEND) {
             Some(code) => join_friend(code, send)?,
@@ -468,14 +527,20 @@ fn run(
                 target
             }
         };
-        let c = connect_tcp(&host, port, address.starts_with(FRIEND), READ_TIMEOUT)?;
-        (host, port, c)
+        (host, port, None, address.starts_with(FRIEND))
+    };
+    let compat = resolve_compat(selection, &host, port, local.is_some() || relayed, send)?;
+    *shared_protocol.lock().unwrap() = compat;
+    horizon_protocol::dialect::set_26_2(compat.protocol() == ProtocolVersion::MINECRAFT_26_2);
+    let mut c = match local {
+        Some(pipe) => Connection::local(pipe),
+        None => connect_tcp(&host, port, relayed, READ_TIMEOUT)?,
     };
     *shared_counters.lock().unwrap() = Some(c.reader.counters.clone());
     let e = |e: horizon_protocol::Error| connection_lost(e, lang);
     c.send(
         &handshake::Serverbound::Intention(handshake::Intention {
-            protocol: PROTOCOL_VERSION,
+            protocol: compat.protocol().raw(),
             host: host.clone(),
             port,
             intent: if transferred {
@@ -591,6 +656,7 @@ fn run(
         send,
         cookies,
         resources,
+        compat,
     )?;
     let _ = send.send(Event::Joined {
         registries: Arc::new(registries),
@@ -605,6 +671,7 @@ fn run(
         send,
         cookies,
         resources,
+        compat,
     )
 }
 
@@ -616,12 +683,24 @@ fn receive_play(
     send: &Sender<Event>,
     cookies: &Cookies,
     resources: &Path,
+    compat: ProtocolCompat,
 ) -> Result<String, String> {
     loop {
         let (id, payload) = reader.recv().map_err(|e| connection_lost(e, lang))?;
+        let id = compat.clientbound_id(State::Play, id);
+        let (id, raw) = compat.clientbound_retarget(State::Play, id, payload);
+        let payload = compat.clientbound_payload(State::Play, id, &raw);
         let packet = match play::Clientbound::decode(id, &payload) {
             Ok(p) => p,
             Err(err) => {
+                if let Some(dir) = std::env::var_os("BELUMI_DUMP_BAD_PACKETS") {
+                    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                    let n = N.fetch_add(1, Ordering::Relaxed);
+                    let _ = std::fs::write(
+                        Path::new(&dir).join(format!("bad-play-{id}-{n}.bin")),
+                        &*raw,
+                    );
+                }
                 let name = horizon_protocol::ids::name(
                     horizon_protocol::State::Play,
                     horizon_protocol::Direction::Clientbound,
@@ -634,7 +713,7 @@ fn receive_play(
         };
         let reply = |p: play::Serverbound| {
             if let Some(w) = shared_writer.lock().unwrap().as_mut() {
-                let _ = w.send(&p.encode());
+                let _ = w.send(&compat.encode_serverbound(State::Play, &p.encode()));
             }
         };
         match packet {
@@ -648,7 +727,10 @@ fn receive_play(
             }
             play::Clientbound::StartConfiguration(_) => {
                 if let Some(w) = shared_writer.lock().unwrap().as_mut() {
-                    let _ = w.send(&play::Serverbound::ConfigurationAcknowledged(Empty).encode());
+                    let _ = w.send(&compat.encode_serverbound(
+                        State::Play,
+                        &play::Serverbound::ConfigurationAcknowledged(Empty).encode(),
+                    ));
                     configuring.store(true, Ordering::Relaxed);
                 }
                 let registries = configure(
@@ -659,6 +741,7 @@ fn receive_play(
                     send,
                     cookies,
                     resources,
+                    compat,
                 )?;
                 let _ = send.send(Event::Reconfigured(Arc::new(registries)));
             }
@@ -709,16 +792,20 @@ fn configure(
     send: &Sender<Event>,
     cookies: &Cookies,
     resources: &Path,
+    compat: ProtocolCompat,
 ) -> Result<Dynamic, String> {
     let mut registries = Dynamic::default();
     let reply = |p: cfg::Serverbound| -> Result<(), String> {
+        let body = compat.encode_serverbound(State::Configuration, &p.encode());
         match writer.lock().unwrap().as_mut() {
-            Some(w) => w.send(&p.encode()).map_err(|e| connection_lost(e, lang)),
+            Some(w) => w.send(&body).map_err(|e| connection_lost(e, lang)),
             None => Err("Disconnected".into()),
         }
     };
     loop {
         let (id, payload) = reader.recv().map_err(|e| connection_lost(e, lang))?;
+        let id = compat.clientbound_id(State::Configuration, id);
+        let payload = compat.clientbound_payload(State::Configuration, id, &payload);
         match cfg::Clientbound::decode(id, &payload).map_err(|e| connection_lost(e, lang))? {
             cfg::Clientbound::KeepAlive(k) => reply(cfg::Serverbound::KeepAlive(k))?,
             cfg::Clientbound::CustomPayload(p) if p.channel == crate::content_identity::CHANNEL => {
@@ -780,8 +867,11 @@ fn configure(
             cfg::Clientbound::FinishConfiguration(_) => {
                 let mut w = writer.lock().unwrap();
                 let w = w.as_mut().ok_or("Disconnected")?;
-                w.send(&cfg::Serverbound::FinishConfiguration(Empty).encode())
-                    .map_err(|e| connection_lost(e, lang))?;
+                w.send(&compat.encode_serverbound(
+                    State::Configuration,
+                    &cfg::Serverbound::FinishConfiguration(Empty).encode(),
+                ))
+                .map_err(|e| connection_lost(e, lang))?;
                 configuring.store(false, Ordering::Relaxed);
                 return Ok(registries);
             }
@@ -803,7 +893,7 @@ fn receive_brand(payload: &cfg::CustomPayload, send: &Sender<Event>) {
 /// The minecraft:brand payload: a string naming the client.
 fn brand() -> Vec<u8> {
     let mut w = horizon_protocol::buf::Writer::new();
-    w.string("horizon");
+    w.string(horizon_protocol::BRAND);
     w.data
 }
 
@@ -932,6 +1022,7 @@ mod tests {
                 &send,
                 &Cookies::default(),
                 Path::new("."),
+                ProtocolCompat::native(),
             ));
         });
         let ended = result
@@ -979,6 +1070,7 @@ mod tests {
                 &send,
                 &Cookies::default(),
                 &root,
+                ProtocolCompat::native(),
             )
         });
         let mut server = Connection::local(server);
@@ -1047,6 +1139,7 @@ mod tests {
                 counters: Arc::new(Mutex::new(None)),
                 cookies: Cookies::default(),
                 debug: false,
+                protocol: Arc::new(Mutex::new(ProtocolCompat::native())),
             };
             let started = std::time::Instant::now();
             if explicit_disconnect {
@@ -1095,6 +1188,7 @@ mod tests {
                 &send,
                 &Cookies::default(),
                 Path::new("."),
+                ProtocolCompat::native(),
             )
         });
         let mut server = Connection::local(server);
@@ -1146,6 +1240,7 @@ mod tests {
             counters: Arc::new(Mutex::new(None)),
             cookies: Cookies::default(),
             debug: false,
+            protocol: Arc::new(Mutex::new(ProtocolCompat::native())),
         };
         let (thread_writer, thread_configuring) =
             (session.writer.clone(), session.configuring.clone());
@@ -1158,6 +1253,7 @@ mod tests {
                 &send,
                 &Cookies::default(),
                 Path::new("."),
+                ProtocolCompat::native(),
             )
         });
         let mut server = Connection::local(server);
@@ -1205,6 +1301,7 @@ mod tests {
                 &send,
                 &thread_cookies,
                 Path::new("."),
+                ProtocolCompat::native(),
             )
         });
         let mut server = Connection::local(server);
@@ -1249,6 +1346,174 @@ mod tests {
             cookies.lock().unwrap().get("proxy:session"),
             Some(&vec![1, 2, 3])
         );
+    }
+
+    fn status_server(protocol: Option<i64>) -> (u16, std::thread::JoinHandle<()>) {
+        use horizon_protocol::packets::status;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let thread = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut connection = Connection::from_stream(stream).unwrap();
+            let (id, body) = connection.recv().unwrap();
+            assert!(matches!(
+                handshake::Serverbound::decode(id, &body).unwrap(),
+                handshake::Serverbound::Intention(handshake::Intention {
+                    intent: handshake::STATUS,
+                    ..
+                })
+            ));
+            let (id, body) = connection.recv().unwrap();
+            assert_eq!(
+                status::Serverbound::decode(id, &body).unwrap(),
+                status::Serverbound::StatusRequest(Empty)
+            );
+            let json = match protocol {
+                Some(protocol) => format!(r#"{{"version":{{"protocol":{protocol}}}}}"#),
+                None => r#"{"version":{}}"#.to_owned(),
+            };
+            connection
+                .send(
+                    &status::Clientbound::StatusResponse(status::StatusResponse { json }).encode(),
+                )
+                .unwrap();
+        });
+        (port, thread)
+    }
+
+    #[test]
+    fn auto_detects_a_26_2_server_before_login() {
+        let (port, server) = status_server(Some(776));
+        let (send, _events) = channel();
+        let compat =
+            resolve_compat(ProtocolSelection::Auto, "127.0.0.1", port, false, &send).unwrap();
+        assert_eq!(compat.protocol(), ProtocolVersion::MINECRAFT_26_2);
+        assert_eq!(compat.clientbound_id(State::Configuration, 12), 13);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn auto_refuses_an_undetectable_or_unsupported_server() {
+        let (port, server) = status_server(None);
+        let (send, _events) = channel();
+        let error =
+            resolve_compat(ProtocolSelection::Auto, "127.0.0.1", port, false, &send).unwrap_err();
+        assert!(error.contains("Could not detect"), "{error}");
+        server.join().unwrap();
+
+        let (send, _events) = channel();
+        let error = resolve_compat(
+            ProtocolSelection::Explicit(ProtocolVersion::new(775)),
+            "127.0.0.1",
+            1,
+            false,
+            &send,
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("unsupported Minecraft protocol 775"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn explicit_and_native_selections_do_not_ping() {
+        let (send, _events) = channel();
+        let native =
+            resolve_compat(ProtocolSelection::Native, "127.0.0.1", 1, false, &send).unwrap();
+        assert_eq!(native.protocol(), ProtocolVersion::NATIVE);
+
+        let explicit = resolve_compat(
+            ProtocolSelection::Explicit(ProtocolVersion::MINECRAFT_26_2),
+            "127.0.0.1",
+            1,
+            false,
+            &send,
+        )
+        .unwrap();
+        assert_eq!(explicit.protocol(), ProtocolVersion::MINECRAFT_26_2);
+
+        let local = resolve_compat(ProtocolSelection::Auto, "local", 0, true, &send).unwrap();
+        assert_eq!(local.protocol(), ProtocolVersion::NATIVE);
+    }
+
+    #[test]
+    fn configuration_translates_verified_26_2_ids_before_decoding() {
+        use horizon_protocol::buf::{Reader, Writer};
+
+        fn with_id(packet: cfg::Clientbound, id: i32) -> Vec<u8> {
+            let body = packet.encode();
+            let mut reader = Reader::new(&body);
+            reader.varint().unwrap();
+            let mut writer = Writer::new();
+            writer.varint(id);
+            writer.bytes(reader.rest());
+            writer.data
+        }
+
+        let (client, server) = horizon_protocol::connection::Pipe::pair();
+        let (mut reader, writer) = Connection::local(client).split();
+        let writer = Mutex::new(Some(writer));
+        let thread = std::thread::spawn(move || {
+            let (send, _events) = channel();
+            configure(
+                &mut reader,
+                &writer,
+                &AtomicBool::new(true),
+                &Language::new(),
+                &send,
+                &Cookies::default(),
+                Path::new("."),
+                ProtocolCompat::for_version(ProtocolVersion::MINECRAFT_26_2).unwrap(),
+            )
+        });
+        let mut server = Connection::local(server);
+
+        server
+            .send(&with_id(
+                cfg::Clientbound::UpdateEnabledFeatures(cfg::UpdateEnabledFeatures {
+                    features: vec!["minecraft:vanilla".into()],
+                }),
+                12,
+            ))
+            .unwrap();
+        server
+            .send(&with_id(
+                cfg::Clientbound::SelectKnownPacks(cfg::SelectKnownPacks {
+                    packs: vec![cfg::KnownPack {
+                        namespace: "minecraft".into(),
+                        id: "core".into(),
+                        version: "26.2".into(),
+                    }],
+                }),
+                14,
+            ))
+            .unwrap();
+        let (id, body) = server.recv().unwrap();
+        assert_eq!(
+            cfg::Serverbound::decode(id, &body).unwrap(),
+            cfg::Serverbound::SelectKnownPacks(cfg::SelectKnownPacks { packs: vec![] })
+        );
+        server
+            .send(&with_id(
+                cfg::Clientbound::UpdateTags(cfg::UpdateTags {
+                    registries: vec![cfg::RegistryTags {
+                        registry: "minecraft:test".into(),
+                        tags: vec![],
+                    }],
+                }),
+                13,
+            ))
+            .unwrap();
+        server
+            .send(&cfg::Clientbound::FinishConfiguration(Empty).encode())
+            .unwrap();
+        let (id, body) = server.recv().unwrap();
+        assert_eq!(
+            cfg::Serverbound::decode(id, &body).unwrap(),
+            cfg::Serverbound::FinishConfiguration(Empty)
+        );
+        assert!(thread.join().unwrap().is_ok());
     }
 
     #[test]

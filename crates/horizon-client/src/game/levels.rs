@@ -389,14 +389,19 @@ impl Game<'_> {
     /// `tick_server` as a server thread runs it. With `HORIZON_SPIKES=MS`, a
     /// tick longer than MS is logged with its thread CPU time and spans.
     pub(super) fn tick_server_timed(&mut self, paused: bool) -> Result<()> {
-        let Some(threshold) = self.options.spikes else {
+        let profiling = horizon_client::belumi_profile::enabled();
+        if self.options.spikes.is_none() && !profiling {
             return self.tick_server(paused);
-        };
+        }
+        let threshold = self.options.spikes.unwrap_or(f32::INFINITY);
         let (started, cpu) = (Instant::now(), horizon_client::spans::thread_cpu());
         let result = self.tick_server(paused);
         let wall = started.elapsed().as_secs_f32() * 1000.0;
         // Taken every tick: nothing else takes this thread's spans.
         let spans = horizon_client::spans::take();
+        if profiling {
+            horizon_client::belumi_profile::record_tick(wall, &spans);
+        }
         if wall > threshold {
             let cpu = horizon_client::spans::thread_cpu()
                 .zip(cpu)

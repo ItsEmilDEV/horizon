@@ -17,6 +17,9 @@ horizon-items = { path = "../horizon-items" }
 horizon-core = { path = "../horizon-core" }
 # The server thread ahead of the workers (MinecraftServer.spin's Thread.setPriority).
 horizon-threads = { path = "../horizon-threads" }
+# Optional Belumi server plugin host (feature `belumi`); lives in the Belumi repository, four levels up.
+belumi-server = { path = "../../../../crates/belumi-server", optional = true }
+belumi-plugin-api = { path = "../../../../crates/belumi-plugin-api", optional = true }
 horizon-hdr = { path = "../horizon-hdr" }
 horizon-world = { path = "../horizon-world" }
 horizon-protocol = { path = "../horizon-protocol" }
@@ -93,6 +96,8 @@ audio = ["horizon-client-render/audio"]
 controllers = ["dep:gilrs", "dep:horizon-dualsense", "horizon-client-input/controllers"]
 # Records the call sites of mob random draws (`mob_ai_probe` traces).
 rng-trace = ["horizon-core/rng-trace"]
+# Belumi server plugins (WebAssembly host from the Belumi repository). Off by default.
+belumi = ["dep:belumi-server", "dep:belumi-plugin-api"]
 
 # Its own name, not `probe`: Cargo copies every crate's examples into one target/<profile>/examples.
 [[example]]

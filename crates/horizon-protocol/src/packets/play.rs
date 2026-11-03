@@ -865,7 +865,7 @@ impl Codec<(i32, Option<(String, Option<f32>)>)> for SoundHolder {
     fn read(r: &mut Reader) -> Result<(i32, Option<(String, Option<f32>)>)> {
         let id = r.varint()?;
         if id != 0 {
-            return Ok((id - 1, None));
+            return Ok((crate::dialect::sound_event_in(id - 1), None));
         }
         let location = r.string(32767)?;
         let range = if r.bool()? { Some(r.f32()?) } else { None };
@@ -1504,7 +1504,7 @@ impl Codec<Commands> for Commands {
                 name = r.string(32767)?;
             }
             if kind == 2 {
-                let id = r.varint()?;
+                let id = crate::dialect::command_argument_in(r.varint()?);
                 let start = r.position();
                 read_argument_properties(r, id)?;
                 parser = Some((id, r.since(start).to_vec()));
@@ -1600,6 +1600,89 @@ pub struct UpdateAdvancements {
     pub removed: Vec<String>,
     pub progress: Vec<(String, Vec<(String, Option<i64>)>)>,
     pub show: bool,
+}
+impl UpdateAdvancements {
+    pub fn read_26_2(r: &mut Reader) -> Result<Self> {
+        let reset = r.bool()?;
+        let n = r.count(r.remaining())?;
+        let mut added = Vec::with_capacity(n.min(1024));
+        for _ in 0..n {
+            let id = r.string(32767)?;
+            let parent = if r.bool()? {
+                Some(r.string(32767)?)
+            } else {
+                None
+            };
+            let (display, x, y) = if r.bool()? {
+                let title = r.nbt()?;
+                let description = r.nbt()?;
+                let icon = crate::item::Template::read_26_2(r)?;
+                let frame = r.varint()?;
+                let flags = r.i32()?;
+                let background = if flags & 1 != 0 {
+                    Some(r.string(32767)?)
+                } else {
+                    None
+                };
+                let x = r.f32()?;
+                let y = r.f32()?;
+                (
+                    Some(AdvancementDisplay {
+                        title,
+                        description,
+                        icon,
+                        frame,
+                        show_toast: flags & 2 != 0,
+                        hidden: flags & 4 != 0,
+                        background,
+                    }),
+                    x,
+                    y,
+                )
+            } else {
+                (None, 0.0, 0.0)
+            };
+            let groups = r.count(r.remaining())?;
+            let mut requirements = Vec::with_capacity(groups.min(256));
+            for _ in 0..groups {
+                let k = r.count(r.remaining())?;
+                requirements.push((0..k).map(|_| r.string(32767)).collect::<Result<_>>()?);
+            }
+            let telemetry = r.bool()?;
+            added.push(Advancement {
+                id,
+                parent,
+                display,
+                requirements,
+                telemetry,
+                x,
+                y,
+            });
+        }
+        let n = r.count(r.remaining())?;
+        let removed = (0..n).map(|_| r.string(32767)).collect::<Result<_>>()?;
+        let n = r.count(r.remaining())?;
+        let mut progress = Vec::with_capacity(n.min(1024));
+        for _ in 0..n {
+            let id = r.string(32767)?;
+            let k = r.count(r.remaining())?;
+            let mut criteria = Vec::with_capacity(k.min(256));
+            for _ in 0..k {
+                let name = r.string(32767)?;
+                let at = if r.bool()? { Some(r.i64()?) } else { None };
+                criteria.push((name, at));
+            }
+            progress.push((id, criteria));
+        }
+        let show = r.bool()?;
+        Ok(Self {
+            reset,
+            added,
+            removed,
+            progress,
+            show,
+        })
+    }
 }
 impl Codec<UpdateAdvancements> for UpdateAdvancements {
     fn read(r: &mut Reader) -> Result<Self> {

@@ -12,9 +12,21 @@ use crate::{
 
 type Read = fn(&mut Reader) -> Result<()>;
 
+fn component_26_2(kind: i32, r: &mut Reader) -> Option<Result<()>> {
+    Some(match kind {
+        76 => list(r, varint),
+        _ => return None,
+    })
+}
+
 /// DataComponents' registry order (26.3) for the ids `Component::read`
 /// doesn't decode itself.
 pub(super) fn component(kind: i32, r: &mut Reader) -> Result<()> {
+    if crate::dialect::is_26_2()
+        && let Some(result) = component_26_2(kind, r)
+    {
+        return result;
+    }
     match kind {
         // Unit.STREAM_CODEC: glider, waxed.
         34 | 120 => Ok(()),

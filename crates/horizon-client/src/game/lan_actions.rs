@@ -1133,6 +1133,10 @@ impl Game<'_> {
                     // attacks the block at once, so a tap released in the same tick
                     // still plays a note. The dig is marked begun for tick_mining.
                     let pos = a.pos;
+                    if host.hub.guests[gi].creative() && self.belumi_block_break_cancelled(host, conn, pos) {
+                        host.play.entry(conn).or_default().digging = None;
+                        return;
+                    }
                     let destroyed = self.as_guest(host, conn, |g| {
                         if g.creative {
                             let _ = g.break_block(pos);
@@ -3135,9 +3139,30 @@ impl Game<'_> {
         }
     }
 
+    fn belumi_block_break_cancelled(&mut self, host: &mut LanHost, conn: u32, pos: [i32; 3]) -> bool {
+        let Some(g) = host.hub.guests.iter().find(|g| g.conn == conn) else {
+            return false;
+        };
+        let event = horizon_client::belumi_hooks::BelumiEvent::BlockBreak {
+            uuid: g.uuid,
+            dimension: &g.dimension,
+            pos,
+        };
+        if !horizon_client::belumi_hooks::emit(event) {
+            return false;
+        }
+        let state = self.world.block(pos[0], pos[1], pos[2]).0 as i32;
+        host.hub.send_to(conn, &C::BlockUpdate(play::BlockUpdate { pos, state }));
+        true
+    }
+
     /// ServerPlayerGameMode.destroyBlock for a guest, its crack cleared for the others
     /// (`destroyBlockProgress(id, pos, -1)`).
     fn guest_destroy(&mut self, host: &mut LanHost, conn: u32, pos: [i32; 3]) {
+        if self.belumi_block_break_cancelled(host, conn, pos) {
+            self.guest_crack_gone(host, conn, pos);
+            return;
+        }
         self.as_guest(host, conn, |g| {
             let _ = g.break_block(pos);
         });

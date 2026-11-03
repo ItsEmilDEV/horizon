@@ -457,16 +457,31 @@ impl Codec<[i32; 3]> for SectionPos {
         )
     }
 }
-/// ByteBufCodecs.BIT_SET: java.util.BitSet as a VarInt-prefixed byte array.
 pub struct BitSet;
 impl Codec<Vec<u8>> for BitSet {
     fn read(r: &mut Reader) -> Result<Vec<u8>> {
-        r.byte_array(r.remaining())
+        let n = r.count(r.remaining() / 8)?;
+        let mut out = Vec::with_capacity(n * 8);
+        for _ in 0..n {
+            out.extend_from_slice(&r.i64()?.to_le_bytes());
+        }
+        let len = out.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
+        out.truncate(len);
+        Ok(out)
     }
     fn write(v: &Vec<u8>, w: &mut Writer) {
-        // BitSet.toByteArray drops trailing zero bytes.
-        let len = v.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
-        w.byte_array(&v[..len])
+        let mut words = v.len().div_ceil(8);
+        while words > 0 && v[(words - 1) * 8..].iter().all(|&b| b == 0) {
+            words -= 1;
+        }
+        w.varint(words as i32);
+        for i in 0..words {
+            let mut word = [0u8; 8];
+            let start = i * 8;
+            let end = (start + 8).min(v.len());
+            word[..end - start].copy_from_slice(&v[start..end]);
+            w.i64(i64::from_le_bytes(word));
+        }
     }
 }
 pub fn bit(set: &[u8], i: usize) -> bool {
@@ -653,13 +668,13 @@ mod tests {
     }
 
     #[test]
-    fn bitset_drops_trailing_zero_bytes() {
+    fn bitset_round_trips_as_long_array() {
         let mut set = vec![0u8; 4];
         set_bit(&mut set, 3);
         set_bit(&mut set, 9);
         let mut w = Writer::new();
         BitSet::write(&set, &mut w);
-        assert_eq!(w.data, [2, 0b1000, 0b10]);
+        assert_eq!(w.data, [1, 0, 0, 0, 0, 0, 0, 0x02, 0x08]);
         let read = BitSet::read(&mut Reader::new(&w.data)).unwrap();
         assert!(bit(&read, 3) && bit(&read, 9) && !bit(&read, 4) && !bit(&read, 100));
     }

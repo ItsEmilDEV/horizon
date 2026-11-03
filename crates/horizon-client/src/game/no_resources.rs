@@ -97,7 +97,7 @@ impl ApplicationHandler for Missing {
             return;
         }
         let attributes = Window::default_attributes()
-            .with_title("Horizon")
+            .with_title("Belumi")
             .with_window_icon(horizon_client::window::icon())
             .with_inner_size(winit::dpi::LogicalSize::new(1040.0, 700.0));
         let made = event_loop

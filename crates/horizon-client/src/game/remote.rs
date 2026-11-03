@@ -428,6 +428,7 @@ impl Game<'_> {
                         lang.clone(),
                         cookies,
                         root.clone(),
+                        self.options.protocol,
                     ),
                     None => Session::connect(
                         address,
@@ -436,6 +437,7 @@ impl Game<'_> {
                         view,
                         lang.clone(),
                         root.clone(),
+                        self.options.protocol,
                     ),
                 }
             }

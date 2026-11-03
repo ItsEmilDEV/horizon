@@ -318,7 +318,7 @@ impl Game<'_> {
             },
         ));
         // game_version: DebugEntryVersion (the launched version and brand).
-        d.priority(format!("Minecraft {VERSION_NAME} ({VERSION_NAME}/horizon)"));
+        d.priority(format!("Minecraft {VERSION_NAME} ({VERSION_NAME}/Belumi)"));
         // player_position, player_section_position.
         if let Some(p) = self.player.as_ref() {
             let mut lines = debug_overlay::position(

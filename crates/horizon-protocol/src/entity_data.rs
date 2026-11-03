@@ -171,10 +171,10 @@ pub enum PositionSource {
 }
 impl Particle {
     pub fn read(r: &mut Reader) -> Result<Particle> {
-        let id = r.varint()?;
+        let id = crate::dialect::particle_in(r.varint()?);
         // `minecraft:particle_type` registry order as of 26.3.
         let data = match id {
-            1 | 2 | 36 | 121 | 125 => Some(ParticleData::State(r.varint()?)),
+            1 | 2 | 36 | 121 | 125 => Some(ParticleData::State(crate::dialect::block_state_in(r.varint()?))),
             28 | 46 | 52 => Some(ParticleData::Color(r.i32()?)),
             21 => {
                 let color = r.i32()?;
@@ -341,14 +341,15 @@ fn read_value(kind: i32, r: &mut Reader) -> Result<Option<Value>> {
         // holder-registry variants (cat to zombie nautilus, painting) and the
         // enum states (sniffer to weathering copper), arm, dye.
         DIRECTION
-        | BLOCK_STATE
-        | OPTIONAL_BLOCK_STATE
         | OPTIONAL_UNSIGNED_INT
         | POSE
         | CAT_VARIANT..=ZOMBIE_NAUTILUS_VARIANT
         | PAINTING_VARIANT..=WEATHERING_COPPER_STATE
         | HUMANOID_ARM
         | DYE_COLOR => Value::Id(r.varint()?),
+        BLOCK_STATE | OPTIONAL_BLOCK_STATE => {
+            Value::Id(crate::dialect::block_state_in(r.varint()?))
+        }
         PARTICLE => Value::Particle(Particle::read(r)?),
         RESOLVABLE_PROFILE => Value::Profile(read_profile(r)?),
         PARTICLES => {
