@@ -193,6 +193,7 @@ pub struct Settings {
     pub controller: crate::gamepad::PadSettings,
     /// Horizon's optional extras (`horizon-extras.txt`), all off by default.
     pub extras: crate::extras::Extras,
+    pub belumi: crate::belumi::Belumi,
     /// The Horizon mods turned on (`horizon-mods.txt`), all off by default.
     pub mods: crate::mod_list::ModList,
     /// The packs in `shaderpacks/`, listed when the Shader Packs page opens; the pick is
@@ -277,6 +278,7 @@ impl Default for Settings {
             horizon: Default::default(),
             controller: Default::default(),
             extras: Default::default(),
+            belumi: Default::default(),
             mods: Default::default(),
             shader_packs: Vec::new(),
         }
@@ -321,6 +323,10 @@ impl Settings {
             .parent()
             .map(crate::extras::Extras::load)
             .unwrap_or_default();
+        let belumi = path
+            .parent()
+            .map(crate::belumi::Belumi::load)
+            .unwrap_or_default();
         let mods = path
             .parent()
             .map(crate::mod_list::ModList::load)
@@ -330,6 +336,7 @@ impl Settings {
                 horizon,
                 controller,
                 extras,
+                belumi,
                 mods,
                 ..Self::parse(&String::from_utf8_lossy(&bytes))
             },
@@ -337,6 +344,7 @@ impl Settings {
                 horizon,
                 controller,
                 extras,
+                belumi,
                 mods,
                 ..Self::default()
             },
@@ -443,6 +451,7 @@ impl Settings {
             horizon: Default::default(),
             controller: Default::default(),
             extras: Default::default(),
+            belumi: Default::default(),
             mods: Default::default(),
             shader_packs: Vec::new(),
             auto_jump: f.bool("autoJump"),
@@ -604,6 +613,7 @@ impl Settings {
             horizon: self.horizon.clone(),
             controller: self.controller.clone(),
             extras: self.extras.clone(),
+            belumi: self.belumi.clone(),
             mods: self.mods.clone(),
             ..Self::from_file(file)
         })
@@ -619,6 +629,7 @@ impl Settings {
             self.horizon.save(dir);
             self.controller.save(dir);
             self.extras.save(dir);
+            self.belumi.save(dir);
             self.mods.save(dir);
         }
     }

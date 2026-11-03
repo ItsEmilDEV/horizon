@@ -49,6 +49,7 @@ mod banners;
 mod beacon;
 mod beds;
 mod beehives;
+mod belumi;
 mod block_entity_anims;
 mod block_entity_ticks;
 mod block_items;
@@ -2096,6 +2097,7 @@ struct Game<'a> {
     frame_graph: horizon_client::perf_overlay::FrameGraph,
     /// Horizon's extras (minimap, auto-reconnect; mods' counters): `game/extras.rs`.
     extras: extras::ExtrasState,
+    belumi: belumi::BelumiState,
     /// Horizon mods (`game/mods.rs`), none running unless turned on.
     mods: mods::ModsState,
     /// Every item and recipe, for mods (`game/native_recipes.rs`), made once.
@@ -15136,6 +15138,7 @@ impl<'a> Game<'a> {
             pending_uploads: Vec::new(),
             frame_graph: Default::default(),
             extras: Default::default(),
+            belumi: Default::default(),
             mods: Default::default(),
             recipe_tables: Default::default(),
             panel: Default::default(),
@@ -16723,7 +16726,9 @@ pub fn run() -> Result<()> {
         horizon_threads::catch_stop_signals();
     }
     let started = Instant::now();
-    horizon_client::spans::enable(options.spikes.is_some() || horizon_client::belumi_profile::enabled());
+    horizon_client::spans::enable(
+        options.spikes.is_some() || horizon_client::belumi_profile::enabled(),
+    );
     let vanilla_root = options.resources.clone();
     if let Some(error) = missing_resources(&vanilla_root) {
         // The game build started by hand (the release's zip), not by the

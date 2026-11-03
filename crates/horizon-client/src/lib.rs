@@ -6,7 +6,7 @@ pub mod ambience;
 pub mod animate_tick;
 pub mod arrows;
 pub use horizon_client_render::{
-    assets, atlas_sources, audio, auth, bidi, biome, block_entities, block_entity_anim,
+    assets, atlas_sources, audio, auth, belumi, bidi, biome, block_entities, block_entity_anim,
     block_entity_render, border_render, breaking, brewing, camera, chat, chunk, chunk_map, clouds,
     collisions, command_block, containers, crash, datapack, dynamic_light, effects, environment,
     extras, fast_hash, fog, font, gfx, graphics, graphics_style, graphics_ui, hud, hud_layout,
@@ -23,6 +23,9 @@ pub mod attribute_updates;
 pub mod auto_jump;
 pub mod banner;
 pub mod beehive;
+pub mod belumi_hooks;
+pub mod belumi_profile;
+pub mod belumi_tuning;
 pub mod benchmark;
 pub mod block_entity_item;
 pub mod block_pattern;
@@ -71,9 +74,6 @@ pub mod item_render;
 pub mod item_sync;
 pub mod item_tooltip;
 pub mod lan;
-pub mod belumi_hooks;
-pub mod belumi_profile;
-pub mod belumi_tuning;
 pub mod landing;
 pub mod locator_bar;
 pub mod menu;

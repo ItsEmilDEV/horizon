@@ -5,6 +5,7 @@ pub mod assets;
 pub mod atlas_sources;
 pub mod audio;
 pub mod auth;
+pub mod belumi;
 pub mod bidi;
 pub mod biome;
 pub mod block_entities;

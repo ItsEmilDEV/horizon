@@ -1040,6 +1040,7 @@ pub enum Page {
     Controller,
     PadBinds,
     Extras,
+    Belumi,
     /// CreditsAndAttributionScreen.
     Credits,
     /// Horizon Settings: every page Horizon adds, as a mod's settings
@@ -1059,6 +1060,7 @@ enum Act {
     Done,
     Cycle(Opt),
     Extra(crate::extras::Item),
+    Belumi(crate::belumi::Item),
     Key(&'static str),
     ResetKey(&'static str),
     ResetKeys,
@@ -1297,6 +1299,7 @@ fn horizon_page_tooltip(page: Page) -> Option<&'static str> {
         Page::GraphicsAdvanced => "horizon.pages.graphics_advanced.tooltip",
         Page::Controller => "horizon.pages.controller.tooltip",
         Page::Extras => "horizon.pages.extras.tooltip",
+        Page::Belumi => "belumi.pages.settings.tooltip",
         Page::Agent => "horizon.pages.agent.tooltip",
         Page::ShaderPacks => "horizon.pages.shader_packs.tooltip",
         Page::Mods => "horizon.pages.mods.tooltip",
@@ -1322,6 +1325,23 @@ impl OptionsUi {
     fn extra_button(&self, s: &Settings, item: crate::extras::Item) -> Widget {
         let label = format!("{}: {}", item.caption(), item.value(&s.extras));
         button(0.0, 0.0, 150.0, Text::literal(label), Act::Extra(item))
+    }
+    fn belumi_button(&self, s: &Settings, item: crate::belumi::Item) -> Widget {
+        let value = format!("{}: {}", item.caption(), item.value(&s.belumi));
+        let label = if item.key_name().is_some() && self.selected_key == item.key_name() {
+            Text::literal(format!("> {value} <")).with_color(text::YELLOW)
+        } else {
+            Text::literal(value)
+        };
+        let widget = button(0.0, 0.0, 150.0, label, Act::Belumi(item));
+        if item
+            .parent()
+            .is_some_and(|parent| parent.switch(&s.belumi) == Some(false))
+        {
+            inactive(widget)
+        } else {
+            widget
+        }
     }
     fn settings_search_active(&self) -> bool {
         self.settings_search.focused
@@ -1439,6 +1459,7 @@ impl OptionsUi {
             Page::Controller => "horizon.pages.controller",
             Page::PadBinds => "horizon.pages.controller_binds",
             Page::Extras => "horizon.pages.extras",
+            Page::Belumi => "belumi.pages.settings",
             Page::Credits => "credits_and_attribution.screen.title",
             Page::Horizon => "horizon.pages.settings",
             Page::Agent => "horizon.pages.agent",
@@ -1576,6 +1597,35 @@ impl OptionsUi {
                 flush(&mut rows, &mut section);
                 rows
             }
+            Page::Belumi => {
+                let mut rows = Vec::new();
+                let mut section = Vec::new();
+                let flush = |rows: &mut Vec<Row>, section: &mut Vec<crate::belumi::Item>| {
+                    rows.extend(section.chunks(2).map(|c| {
+                        Row::Buttons(
+                            self.belumi_button(s, c[0]),
+                            c.get(1).map(|&b| self.belumi_button(s, b)),
+                        )
+                    }));
+                    section.clear();
+                };
+                for row in crate::belumi::rows() {
+                    match row {
+                        Err(header) => {
+                            flush(&mut rows, &mut section);
+                            rows.push(Row::Header(header));
+                        }
+                        Ok(item) => section.push(item),
+                    }
+                }
+                flush(&mut rows, &mut section);
+                rows.push(Row::Header("Quick toggles"));
+                rows.push(Row::Buttons(
+                    self.extra_button(s, crate::extras::Item::Fullbright),
+                    Some(self.extra_button(s, crate::extras::Item::MouseTweaks)),
+                ));
+                rows
+            }
             Page::Horizon => {
                 // Two to a row, as vanilla's OptionsList.addSmall lays out
                 // buttons; each opens a page built from vanilla's widgets.
@@ -1597,6 +1647,7 @@ impl OptionsUi {
                         open("horizon.pages.open.extras", Page::Extras),
                         Some(open("horizon.pages.open.mods", Page::Mods)),
                     ),
+                    Row::Buttons(open("belumi.pages.open.settings", Page::Belumi), None),
                     // No AI hides the AI Agent page and everything AI.
                     Row::Buttons(
                         self.extra_button(s, crate::extras::Item::DiscordPresence),
@@ -2464,6 +2515,13 @@ impl OptionsUi {
                     tooltip = Some(atlas.font.split(&Text::literal(item.description()), 170.0));
                 }
                 if let WKind::Button {
+                    act: Act::Belumi(item),
+                    ..
+                } = &wd.kind
+                {
+                    tooltip = Some(atlas.font.split(&Text::literal(item.description()), 170.0));
+                }
+                if let WKind::Button {
                     act: Act::Push(page),
                     ..
                 } = &wd.kind
@@ -2825,6 +2883,14 @@ impl OptionsUi {
                                 events.push(Event::Changed);
                             }
                         }
+                        Act::Belumi(item) => {
+                            if let Some(name) = item.key_name() {
+                                self.selected_key = Some(name);
+                            } else {
+                                item.cycle(&mut s.belumi, right);
+                                events.push(Event::Changed);
+                            }
+                        }
                         Act::Key(name) => self.selected_key = Some(name),
                         Act::ResetKey(name) => {
                             s.keys.set(name, KeyBinds::default_of(name));
@@ -3175,7 +3241,7 @@ impl OptionsUi {
             keys.insert(key.clone(), value);
             return vec![Event::Changed];
         }
-        if !s.extras.set_key(name, value.clone()) {
+        if !s.extras.set_key(name, value.clone()) && !s.belumi.set_key(name, value.clone()) {
             s.keys.set(name, &value);
         }
         vec![Event::Changed]
@@ -4707,6 +4773,7 @@ mod tests {
                 Page::Controller,
                 Page::Extras,
                 Page::Mods,
+                Page::Belumi,
                 Page::Agent,
             ]
         );

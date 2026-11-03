@@ -261,10 +261,14 @@ impl NaturalLevel for GameLevel<'_, '_> {
     // The `natural_mob_spawns` attribute reads the zoomed biome
     // (fullResolutionBiomes), the spawn probability the noise cell.
     fn biome_spawns(&self, x: i32, y: i32, z: i32) -> Option<&HashMap<String, Vec<SpawnEntry>>> {
+        horizon_client::spans::time("sp.biome_spawns", || {
         self.zoomed_biome(x, y, z).map(|b| &b.spawns)
+        })
     }
     fn spawn_cost(&self, entity: &str, x: i32, y: i32, z: i32) -> Option<SpawnCost> {
+        horizon_client::spans::time("sp.spawn_cost", || {
         self.zoomed_biome(x, y, z)?.spawn_costs.get(entity).copied()
+        })
     }
     fn creature_probability(&self, x: i32, y: i32, z: i32) -> f32 {
         self.biome(x, y, z).map_or(0.1, |b| b.creature_probability)
@@ -276,6 +280,7 @@ impl NaturalLevel for GameLevel<'_, '_> {
         z: i32,
         wanted: &dyn Fn(&str) -> bool,
     ) -> Vec<StructureAt> {
+        horizon_client::spans::time("sp.structures_at", || {
         self.game
             .structures_reaching_where([x, y, z], wanted)
             .into_iter()
@@ -285,6 +290,7 @@ impl NaturalLevel for GameLevel<'_, '_> {
                 in_bounds: true,
             })
             .collect()
+        })
     }
     fn structure_spawns(&self) -> &StructureSpawns {
         StructureSpawns::shared(&self.game.options.resources)
@@ -309,6 +315,7 @@ impl NaturalLevel for GameLevel<'_, '_> {
         self.game.world.chunks.contains_key(&(cx, cz))
     }
     fn no_collision(&self, bounds: Aabb) -> bool {
+        horizon_client::spans::time("sp.no_collision", || {
         let mut scene = SceneCollisions {
             world: &self.game.world,
             binding: self.w.collision,
@@ -325,8 +332,10 @@ impl NaturalLevel for GameLevel<'_, '_> {
                 .borrow()
                 .iter()
                 .any(|(id, b)| id == "minecraft:shulker" && b.intersects(grown))
+        })
     }
     fn unobstructed(&self, bounds: Aabb) -> bool {
+        horizon_client::spans::time("sp.unobstructed", || {
         let player = self
             .players
             .iter()
@@ -336,6 +345,7 @@ impl NaturalLevel for GameLevel<'_, '_> {
             && !self
                 .mobs_near(bounds)
                 .any(|(_, b, alive, _)| alive && b.intersects(bounds))
+        })
     }
     fn spawn_mobs(&self) -> bool {
         self.game.ui.rules.bool("spawn_mobs")
@@ -374,6 +384,7 @@ impl horizon_client::mobs::spawner::SpawnerLevel for GameLevel<'_, '_> {
         self.game.res.mob_types().contains_key(id) || self.game.entity_type_exists(id)
     }
     fn count_entities(&self, id: &str, bounds: Aabb) -> usize {
+        horizon_client::spans::time("sp.count_entities", || {
         let mobs = self
             .mobs_near(bounds)
             .filter(|&(i, b, ..)| self.game.mobs[i].kind.id == id && b.intersects(bounds))
@@ -385,6 +396,7 @@ impl horizon_client::mobs::spawner::SpawnerLevel for GameLevel<'_, '_> {
             .filter(|(k, b)| k == id && b.intersects(bounds))
             .count();
         mobs + pending
+        })
     }
 }
 impl<'a> Game<'a> {
