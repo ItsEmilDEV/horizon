@@ -84,12 +84,14 @@ impl Game<'_> {
     /// Auto-reconnect: the server let the player in.
     pub(super) fn extras_joined(&mut self) {
         self.extras.reconnect.joined(std::time::Instant::now());
+        self.belumi_voice_joined();
     }
     /// Auto-reconnect: the player left the server on purpose.
     pub(super) fn extras_left(&mut self) {
         self.extras.reconnect.reset();
         self.belumi_left();
         self.belumi_plugins_leave();
+        self.belumi_voice_left();
     }
     /// Auto-reconnect's next attempt after a disconnect, when it is on and
     /// the reason allows one.

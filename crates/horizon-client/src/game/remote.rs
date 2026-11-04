@@ -2118,6 +2118,9 @@ impl Game<'_> {
 
     fn handle_packet(&mut self, packet: C) -> Result<()> {
         match packet {
+            C::CustomPayload(p) if self.belumi_voice_channel(&p.channel) => {
+                self.belumi_voice_payload(&p.data);
+            }
             // ClientCommonPacketListenerImpl.handlePing runs on the game
             // thread, after all preceding packets (especially teleports).
             C::Ping(p) => self.send(S::Pong(p)),
@@ -7751,6 +7754,13 @@ impl Remote {
         self.profile
     }
     /// The entity id of a player in the level, by profile UUID.
+    #[cfg_attr(not(feature = "belumi-voice"), allow(dead_code))]
+    pub(super) fn player_positions(&self) -> Vec<(u128, [f64; 3])> {
+        self.level_players
+            .iter()
+            .filter_map(|(id, uuid)| Some((*uuid, self.entities.get(id)?.position)))
+            .collect()
+    }
     pub(super) fn player_entity(&self, uuid: u128) -> Option<u32> {
         self.level_players
             .iter()

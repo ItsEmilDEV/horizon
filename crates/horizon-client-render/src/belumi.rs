@@ -9,6 +9,11 @@ pub const WAYPOINT_KEY: &str = "belumi.waypoint";
 pub const WORLDMAP_KEY: &str = "belumi.worldmap";
 pub const PLUGINS_DIR: &str = "belumi-plugins";
 pub const FREECAM_KEY: &str = "belumi.freecam";
+pub const VOICE_KEY: &str = "belumi.voice";
+pub const VOICE_MUTE_KEY: &str = "belumi.voice_mute";
+pub const VOICE_THRESHOLDS: [f32; 4] = [-60.0, -50.0, -40.0, -30.0];
+pub const VOICE_MIC_GAINS: [f32; 4] = [0.5, 1.0, 1.5, 2.0];
+pub const VOICE_VOLUMES: [f32; 4] = [0.5, 1.0, 1.5, 2.0];
 pub const FREECAM_SPEEDS: [f32; 4] = [5.0, 12.0, 30.0, 60.0];
 
 pub const ZOOM_LEVELS: [f32; 5] = [1.5, 2.0, 3.0, 4.0, 8.0];
@@ -45,6 +50,13 @@ pub struct Belumi {
     pub waypoint_labels: bool,
     pub worldmap: bool,
     pub worldmap_key: String,
+    pub voice: bool,
+    pub voice_mode: u8,
+    pub voice_key: String,
+    pub voice_mute_key: String,
+    pub voice_threshold: u8,
+    pub voice_mic: u8,
+    pub voice_volume: u8,
     pub plugins: bool,
     pub plugin_corner: String,
     pub freecam: bool,
@@ -81,6 +93,13 @@ impl Default for Belumi {
             waypoint_labels: true,
             worldmap: false,
             worldmap_key: "key.keyboard.m".into(),
+            voice: false,
+            voice_mode: 0,
+            voice_key: "key.keyboard.v".into(),
+            voice_mute_key: "key.keyboard.k".into(),
+            voice_threshold: 1,
+            voice_mic: 1,
+            voice_volume: 1,
             plugins: false,
             plugin_corner: Corner::BottomRight.name().into(),
             freecam: false,
@@ -109,6 +128,10 @@ impl Belumi {
         b.minimap_size = b.minimap_size.min(MINIMAP_SIZES.len() as u8 - 1);
         b.minimap_zoom = b.minimap_zoom.min(MINIMAP_ZOOMS.len() as u8 - 1);
         b.freecam_speed = b.freecam_speed.min(FREECAM_SPEEDS.len() as u8 - 1);
+        b.voice_mode = b.voice_mode.min(1);
+        b.voice_threshold = b.voice_threshold.min(VOICE_THRESHOLDS.len() as u8 - 1);
+        b.voice_mic = b.voice_mic.min(VOICE_MIC_GAINS.len() as u8 - 1);
+        b.voice_volume = b.voice_volume.min(VOICE_VOLUMES.len() as u8 - 1);
         b
     }
     pub fn serialize(&self) -> String {
@@ -129,6 +152,15 @@ impl Belumi {
     }
     pub fn minimap_corner(&self) -> Corner {
         corner_of(&self.minimap_corner, Corner::TopRight)
+    }
+    pub fn voice_threshold_db(&self) -> f32 {
+        VOICE_THRESHOLDS[usize::from(self.voice_threshold).min(VOICE_THRESHOLDS.len() - 1)]
+    }
+    pub fn voice_mic_gain(&self) -> f32 {
+        VOICE_MIC_GAINS[usize::from(self.voice_mic).min(VOICE_MIC_GAINS.len() - 1)]
+    }
+    pub fn voice_volume_gain(&self) -> f32 {
+        VOICE_VOLUMES[usize::from(self.voice_volume).min(VOICE_VOLUMES.len() - 1)]
     }
     pub fn plugin_corner(&self) -> Corner {
         corner_of(&self.plugin_corner, Corner::BottomRight)
@@ -185,6 +217,13 @@ pub enum Item {
     WaypointLabels,
     Worldmap,
     WorldmapKey,
+    Voice,
+    VoiceMode,
+    VoiceKey,
+    VoiceMuteKey,
+    VoiceThreshold,
+    VoiceMic,
+    VoiceVolume,
     Plugins,
     PluginCorner,
     Freecam,
@@ -232,6 +271,9 @@ const CORNERS: &[&str] = &["Top left", "Top right", "Bottom left", "Bottom right
 const SIZES: &[&str] = &["Small", "Medium", "Large"];
 const MAP_ZOOMS: &[&str] = &["0.5 blocks/px", "1 block/px", "2 blocks/px", "4 blocks/px"];
 const FREECAM_LABELS: &[&str] = &["Slow", "Normal", "Fast", "Very fast"];
+const VOICE_MODES: &[&str] = &["Push to talk", "Voice activation"];
+const VOICE_THRESHOLD_LABELS: &[&str] = &["-60 dB (sensitive)", "-50 dB", "-40 dB", "-30 dB (loud only)"];
+const VOICE_GAIN_LABELS: &[&str] = &["50%", "100%", "150%", "200%"];
 const LEVELS: &[&str] = &["1.5x", "2x", "3x", "4x", "8x"];
 
 fn corner_index(name: &str, default: Corner) -> usize {
@@ -324,6 +366,13 @@ const SPECS: &[Spec] = &[
     switch!(WaypointLabels, "Map markers", "Marks waypoints on the minimap and the world map.", Some(Item::Waypoints), waypoint_labels),
     switch!(Worldmap, "World map", "Remembers explored terrain and shows it in a full-screen overlay.", None, worldmap),
     key!(WorldmapKey, "World map key", Some(Item::Worldmap), WORLDMAP_KEY, worldmap_key),
+    switch!(Voice, "Voice chat", "Talks to other players on servers with the Simple Voice Chat mod (needs a build with voice support).", None, voice),
+    choice!(VoiceMode, "Microphone mode", "Push to talk sends only while the key is held; voice activation opens on sound.", Some(Item::Voice), VOICE_MODES, voice_mode),
+    key!(VoiceKey, "Push-to-talk key", Some(Item::Voice), VOICE_KEY, voice_key),
+    key!(VoiceMuteKey, "Mute key", Some(Item::Voice), VOICE_MUTE_KEY, voice_mute_key),
+    choice!(VoiceThreshold, "Activation level", "How loud you must be to open the microphone in voice activation mode.", Some(Item::Voice), VOICE_THRESHOLD_LABELS, voice_threshold),
+    choice!(VoiceMic, "Microphone volume", "Boosts or lowers what you send.", Some(Item::Voice), VOICE_GAIN_LABELS, voice_mic),
+    choice!(VoiceVolume, "Voice volume", "How loud other players sound.", Some(Item::Voice), VOICE_GAIN_LABELS, voice_volume),
     switch!(Plugins, "Client plugins", "Runs the WebAssembly plugins in belumi-plugins/ (needs a build with plugin support). Type /plugins to list them.", None, plugins),
     corner!(PluginCorner, "Plugin HUD corner", "The screen corner plugin HUD lines appear in.", Some(Item::Plugins), plugin_corner, Corner::BottomRight),
     switch!(Freecam, "Freecam", "Detaches the camera from your body: fly around while you stay put. The wheel changes the speed.", None, freecam),
@@ -341,6 +390,7 @@ pub fn rows() -> Vec<Result<Item, &'static str>> {
         ("Zoom", &[Zoom, ZoomKey, ZoomLevel, ZoomSmooth, ZoomScroll]),
         ("Maps", &[Minimap, MinimapCorner, MinimapSize, MinimapZoom, MinimapRotate, MinimapRound, Worldmap, WorldmapKey]),
         ("Waypoints", &[Waypoints, WaypointKey, WaypointList, WaypointLabels]),
+        ("Voice chat", &[Voice, VoiceMode, VoiceKey, VoiceMuteKey, VoiceThreshold, VoiceMic, VoiceVolume]),
         ("Plugins", &[Plugins, PluginCorner]),
         ("Camera", &[Freecam, FreecamKey, FreecamSpeed]),
         ("Debug", &[Inspector, InspectorKey, InspectorCorner]),
@@ -451,6 +501,8 @@ mod tests {
         assert_eq!(b.worldmap_key, "key.keyboard.n");
         assert!(b.set_key(WAYPOINT_KEY, "key.keyboard.v".into()));
         assert!(b.set_key(FREECAM_KEY, "key.keyboard.g".into()));
+        assert!(b.set_key(VOICE_KEY, "key.keyboard.b".into()));
+        assert!(b.set_key(VOICE_MUTE_KEY, "key.keyboard.j".into()));
         assert!(!b.set_key("key.jump", "key.keyboard.x".into()));
         assert_eq!(Item::ZoomKey.key_name(), Some(ZOOM_KEY));
         assert_eq!(Item::Hud.key_name(), None);

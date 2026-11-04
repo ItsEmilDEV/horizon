@@ -310,6 +310,7 @@ impl Game<'_> {
     pub(super) fn native_frame(&mut self, elapsed: Duration) {
         self.belumi_frame(elapsed);
         self.belumi_plugins_frame();
+        self.belumi_voice_frame(elapsed.as_secs_f32());
         self.belumi_freecam_frame(elapsed.as_secs_f32());
         self.belumi_explore(elapsed.as_secs_f32());
     }
@@ -357,6 +358,7 @@ impl Game<'_> {
         self.belumi_key(key, pressed);
         self.belumi_map_key(key, pressed);
         self.belumi_plugins_key(key, pressed);
+        self.belumi_voice_key(key, pressed);
     }
     /// Wheel steps while playing: set `claimed` to keep them from the hotbar.
     pub(super) fn native_wheel(&mut self, steps: f32, claimed: &mut bool) {

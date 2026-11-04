@@ -20,6 +20,7 @@ horizon-threads = { path = "../horizon-threads" }
 # Optional Belumi server plugin host (feature `belumi`); lives in the Belumi repository, four levels up.
 belumi-server = { path = "../../../../crates/belumi-server", optional = true }
 belumi-plugin-api = { path = "../../../../crates/belumi-plugin-api", optional = true }
+belumi-voice = { path = "../../../../crates/belumi-voice", optional = true }
 belumi-client-plugins = { path = "../../../../crates/belumi-client-plugins", optional = true }
 horizon-hdr = { path = "../horizon-hdr" }
 horizon-world = { path = "../horizon-world" }
@@ -101,6 +102,8 @@ rng-trace = ["horizon-core/rng-trace"]
 belumi = ["dep:belumi-server", "dep:belumi-plugin-api"]
 # Belumi client plugins: sandboxed WebAssembly run by the game (docs/client-plugins.md). Off by default.
 belumi-plugins = ["dep:belumi-client-plugins"]
+# Belumi voice chat: Simple Voice Chat compatible client (docs/voice-chat.md). Needs libopus. Off by default.
+belumi-voice = ["dep:belumi-voice"]
 
 # Its own name, not `probe`: Cargo copies every crate's examples into one target/<profile>/examples.
 [[example]]

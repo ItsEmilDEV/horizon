@@ -53,6 +53,7 @@ mod belumi;
 mod belumi_freecam;
 mod belumi_maps;
 mod belumi_plugins;
+mod belumi_voice;
 mod block_entity_anims;
 mod block_entity_ticks;
 mod block_items;
@@ -2104,6 +2105,7 @@ struct Game<'a> {
     belumi_maps: belumi_maps::MapState,
     belumi_free: belumi_freecam::FreecamState,
     belumi_plugins: belumi_plugins::PluginState,
+    belumi_voice: belumi_voice::VoiceState,
     /// Horizon mods (`game/mods.rs`), none running unless turned on.
     mods: mods::ModsState,
     /// Every item and recipe, for mods (`game/native_recipes.rs`), made once.
@@ -3184,6 +3186,7 @@ impl Game<'_> {
         &mut self,
         f: impl FnOnce(&Behaviours, &mut GameLevel<'_>, &mut Ticks) -> R,
     ) -> R {
+        let t_setup = horizon_client::spans::start();
         let darken = self.sky_darken();
         let (rain, thunder) = self.world.weather.levels(1.0);
         // Spectators ignore block triggers (Entity.isIgnoringBlockTriggers).
@@ -3319,6 +3322,7 @@ impl Game<'_> {
             client_side: self.remote.is_some(),
             native_authoritative: self.serving.is_some() || self.options.dedicated.is_some(),
         };
+        horizon_client::spans::stop("with_level.setup", t_setup);
         let result = f(self.res.behaviours(), &mut level, &mut self.block_ticks);
         self.flush_spill();
         result
@@ -3485,18 +3489,19 @@ impl Game<'_> {
     /// ServerLevel.tick block phases: scheduled ticks, random ticks in the
     /// chunks the tickets simulate, block events and moving pistons.
     fn tick_blocks(&mut self) -> Result<()> {
-        self.sync_tick_chunks();
-        self.start_ticking_chunks();
+        horizon_client::spans::time("blocks.sync_chunks", || self.sync_tick_chunks());
+        horizon_client::spans::time("blocks.start_chunks", || self.start_ticking_chunks());
         let levels = self.tickets.levels();
         // Keep the world map's chunk order, including empty chunks
         // (tick_chunk_random still draws for precipitation in those).
-        let ticking: Vec<_> = self
-            .world
-            .chunks
-            .keys()
-            .copied()
-            .filter(|&(x, z)| levels.random_ticking(x, z) && ticking_chunk(&self.world, x, z))
-            .collect();
+        let ticking: Vec<_> = horizon_client::spans::time("blocks.ticking_list", || {
+            self.world
+                .chunks
+                .keys()
+                .copied()
+                .filter(|&(x, z)| levels.random_ticking(x, z) && ticking_chunk(&self.world, x, z))
+                .collect()
+        });
         // Entity.checkInsideBlocks for the plates, tripwires, detector rails and
         // buttons under the players (the host and the LAN guests), the minecarts
         // and the arrows (the mobs and other entities are added in `with_level`
@@ -3578,6 +3583,7 @@ impl Game<'_> {
                 }
             }
         }
+        let t_inside = horizon_client::spans::start();
         self.with_level(|b, level, ticks| {
             // LilyPadBlock.entityInside: a boat inside a lily pad breaks it.
             let mut boat_cells: Vec<BlockPos> = Vec::new();
@@ -3615,8 +3621,10 @@ impl Game<'_> {
                 b.entity_on_big_dripleaf(level, ticks, pos, on_ground, feet_y);
             }
         });
+        horizon_client::spans::stop("blocks.inside", t_inside);
         self.process_level_events()?;
-        self.tick_scheduled()?;
+        horizon_client::spans::time("blocks.scheduled", || self.tick_scheduled())?;
+        let t_random = horizon_client::spans::start();
         self.with_level(|b, level, ticks| {
             for (x, z) in ticking {
                 // The sections are read again only after a block changed.
@@ -3640,6 +3648,7 @@ impl Game<'_> {
             b.run_block_events(level, ticks);
             b.tick_block_entities(level, ticks);
         });
+        horizon_client::spans::stop("blocks.random", t_random);
         // `PistonMovingBlockEntity.tick` pushes what its block just ran into,
         // with the progress it is about to take.
         let pushes = std::mem::take(&mut self.block_ticks.piston_pushes);
@@ -15156,6 +15165,7 @@ impl<'a> Game<'a> {
             belumi_maps: Default::default(),
             belumi_free: Default::default(),
             belumi_plugins: Default::default(),
+            belumi_voice: Default::default(),
             mods: Default::default(),
             recipe_tables: Default::default(),
             panel: Default::default(),
