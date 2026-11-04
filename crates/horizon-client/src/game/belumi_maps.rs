@@ -69,7 +69,7 @@ pub(super) fn project(cam: &Camera, target: [f64; 3]) -> Option<(f32, f32)> {
     let (sp, cp) = f64::from(cam.pitch).to_radians().sin_cos();
     let forward = [-sy * cp, -sp, cy * cp];
     let right = [-cy, 0.0, -sy];
-    let up = [sy * sp, cp, -cy * sp];
+    let up = [-sy * sp, cp, cy * sp];
     let dot = |a: [f64; 3]| a[0] * d[0] + a[1] * d[1] + a[2] * d[2];
     let z = dot(forward);
     if z < 0.5 {
@@ -125,6 +125,10 @@ impl Game<'_> {
 
     pub(super) fn belumi_connecting(&mut self, address: &str) {
         self.belumi_maps.server = address.to_owned();
+    }
+
+    pub(super) fn belumi_maps_clear_server(&mut self) {
+        self.belumi_maps.server.clear();
     }
 
     pub(super) fn belumi_left(&mut self) {
@@ -483,6 +487,20 @@ mod tests {
         assert!(above.1 < 0.5);
         assert!(project(&cam(), [0.0, 0.0, -10.0]).is_none());
         assert!(project(&cam(), [300.0, 0.0, 10.0]).is_none());
+    }
+
+    #[test]
+    fn labels_stay_put_when_the_view_is_pitched() {
+        let level = project(&cam(), [0.0, 0.0, 10.0]).unwrap();
+        let mut pitched = cam();
+        pitched.pitch = 30.0;
+        let (u, v) = project(&pitched, [0.0, -10.0 * 30f64.to_radians().tan(), 10.0]).unwrap();
+        assert!((u - level.0).abs() < 1e-3 && (v - level.1).abs() < 1e-3, "{u} {v}");
+        pitched.yaw = 40.0;
+        let (sy, cy) = 40f64.to_radians().sin_cos();
+        let ahead = [-sy * 10.0, -10.0 * 30f64.to_radians().tan(), cy * 10.0];
+        let (u, v) = project(&pitched, ahead).unwrap();
+        assert!((u - 0.5).abs() < 0.2 && v < 0.6, "{u} {v}");
     }
 
     #[test]

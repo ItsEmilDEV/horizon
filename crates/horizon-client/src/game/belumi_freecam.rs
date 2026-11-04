@@ -122,6 +122,9 @@ impl Game<'_> {
             self.belumi_freecam_off();
             return;
         }
+        if let Some(p) = self.player.as_ref() {
+            self.belumi_free.anchor = [p.position.x, p.position.y, p.position.z];
+        }
         let held = |g: &mut Self, name: &str| {
             g.native_playing() && g.native_mapping(name).is_some_and(|(down, _)| down)
         };

@@ -259,7 +259,7 @@ fn brightness(color: u8, height: i16, north: Option<i16>, depth: u8, parity: i32
         };
     }
     let north = north.unwrap_or(height);
-    let diff = f64::from(height - north) * 4.0 / 5.0 + (parity - 0.5) * 0.4;
+    let diff = f64::from(i32::from(height) - i32::from(north)) * 4.0 / 5.0 + (parity - 0.5) * 0.4;
     if diff > 0.6 {
         2
     } else if diff < -0.6 {

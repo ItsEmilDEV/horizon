@@ -26,10 +26,14 @@ pub struct Waypoints {
 
 impl Waypoints {
     pub fn load(dir: &Path) -> Self {
-        fs::read_to_string(dir.join(FILE))
-            .ok()
-            .and_then(|t| toml::from_str(&t).ok())
-            .unwrap_or_default()
+        let path = dir.join(FILE);
+        let Ok(text) = fs::read_to_string(&path) else {
+            return Self::default();
+        };
+        toml::from_str(&text).unwrap_or_else(|_| {
+            let _ = fs::rename(&path, path.with_extension("toml.bak"));
+            Self::default()
+        })
     }
     pub fn save(&self, dir: &Path) {
         let path = dir.join(FILE);

@@ -11,6 +11,8 @@ use std::{
 
 const MAGIC: &[u8; 4] = b"BWM1";
 const RECORD: usize = 8 + 256 + 512 + 256;
+const MAX_RAW: u64 = 512 * 1024 * 1024;
+static SAVES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 #[derive(Default)]
 pub struct Worldmap {
@@ -76,7 +78,7 @@ impl Worldmap {
             return map;
         };
         let mut raw = Vec::new();
-        if ZlibDecoder::new(body).read_to_end(&mut raw).is_err() {
+        if ZlibDecoder::new(body).take(MAX_RAW).read_to_end(&mut raw).is_err() {
             return map;
         }
         for rec in raw.chunks_exact(RECORD) {
@@ -118,7 +120,7 @@ impl Worldmap {
         if let Some(dir) = path.parent() {
             let _ = fs::create_dir_all(dir);
         }
-        let tmp = path.with_extension("tmp");
+        let tmp = path.with_extension(format!("{}.tmp", SAVES.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
         if fs::write(&tmp, self.encode()).is_ok() && fs::rename(&tmp, path).is_ok() {
             self.dirty = false;
         }

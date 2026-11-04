@@ -13375,7 +13375,7 @@ impl Game<'_> {
     }
     /// A mouse button while playing (window or control socket).
     fn play_mouse(&mut self, button: MouseButton, pressed: bool) -> Result<()> {
-        if self.sleeping.is_some() || self.belumi_freecam_active() {
+        if self.sleeping.is_some() || (pressed && self.belumi_freecam_active()) {
             return Ok(());
         }
         // key.spectatorHotbar (the middle button) opens the spectator menu

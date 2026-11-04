@@ -390,6 +390,9 @@ impl Game<'_> {
     ) -> Result<()> {
         self.reset_tutorial();
         self.perf.world_opening();
+        if local.is_some() {
+            self.belumi_maps_clear_server();
+        }
         let root = self.options.resources.clone();
         let builtin = Builtin::find(&root)
             .and_then(|p| Builtin::load(&p).ok())
@@ -610,6 +613,10 @@ impl Game<'_> {
         if reason.is_none() {
             // Leaving on purpose: nothing for auto-reconnect to retry.
             self.extras_left();
+        } else {
+            self.belumi_left();
+            self.belumi_plugins_leave();
+            self.belumi_voice_left();
         }
         self.clear_waypoints();
         self.hud_disconnected();
