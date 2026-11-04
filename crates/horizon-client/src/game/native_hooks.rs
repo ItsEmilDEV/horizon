@@ -309,6 +309,7 @@ impl Game<'_> {
     /// Once a frame, in a world or not, after Horizon's extras.
     pub(super) fn native_frame(&mut self, elapsed: Duration) {
         self.belumi_frame(elapsed);
+        self.belumi_freecam_frame(elapsed.as_secs_f32());
         self.belumi_explore(elapsed.as_secs_f32());
     }
     /// Once a tick, in every `Game`: the window's (in single player, on LAN
@@ -355,6 +356,7 @@ impl Game<'_> {
     }
     /// Wheel steps while playing: set `claimed` to keep them from the hotbar.
     pub(super) fn native_wheel(&mut self, steps: f32, claimed: &mut bool) {
+        self.belumi_freecam_wheel(steps, claimed);
         self.belumi_map_wheel(steps, claimed);
         self.belumi_wheel(steps, claimed);
     }

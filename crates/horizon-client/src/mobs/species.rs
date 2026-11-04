@@ -1321,8 +1321,34 @@ pub const ALL: &[Def] = &[
         Baby::None
     ),
 ];
+/// Index into [`ALL`] by species discriminant (the first entry of a species
+/// wins, as the linear search it replaces).
+fn index() -> &'static [u16] {
+    static INDEX: std::sync::OnceLock<Vec<u16>> = std::sync::OnceLock::new();
+    INDEX.get_or_init(|| {
+        let n = ALL.iter().map(|d| d.species as usize).max().map_or(0, |m| m + 1);
+        let mut v = vec![u16::MAX; n];
+        for (i, d) in ALL.iter().enumerate().rev() {
+            v[d.species as usize] = i as u16;
+        }
+        v
+    })
+}
 pub fn def(s: Species) -> &'static Def {
-    ALL.iter().find(|d| d.species == s).unwrap_or(&ALL[0])
+    match index().get(s as usize) {
+        Some(&i) if i != u16::MAX => &ALL[i as usize],
+        _ => &ALL[0],
+    }
+}
+/// `minecraft:<name>` of a species, built once.
+pub fn entity_id(s: Species) -> &'static str {
+    static IDS: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    let ids = IDS.get_or_init(|| ALL.iter().map(|d| format!("minecraft:{}", d.name)).collect());
+    let i = match index().get(s as usize) {
+        Some(&i) if i != u16::MAX => i as usize,
+        _ => 0,
+    };
+    &ids[i]
 }
 impl Def {
     /// Model layer families to load for this entity (adult, baby, variants).

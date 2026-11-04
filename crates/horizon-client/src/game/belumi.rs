@@ -64,6 +64,10 @@ impl Game<'_> {
 
     pub(super) fn belumi_key(&mut self, key: &str, pressed: bool) {
         let cfg = &self.settings.belumi;
+        if pressed && cfg.freecam && key == cfg.freecam_key && self.native_playing() {
+            self.belumi_freecam_toggle();
+        }
+        let cfg = &self.settings.belumi;
         if pressed && cfg.inspector && key == cfg.inspector_key && self.native_playing() {
             self.belumi.inspector_open = !self.belumi.inspector_open;
             horizon_client::belumi_inspect::set_active(self.belumi.inspector_open);

@@ -7,6 +7,8 @@ pub const ZOOM_KEY: &str = "belumi.zoom";
 pub const INSPECTOR_KEY: &str = "belumi.inspector";
 pub const WAYPOINT_KEY: &str = "belumi.waypoint";
 pub const WORLDMAP_KEY: &str = "belumi.worldmap";
+pub const FREECAM_KEY: &str = "belumi.freecam";
+pub const FREECAM_SPEEDS: [f32; 4] = [5.0, 12.0, 30.0, 60.0];
 
 pub const ZOOM_LEVELS: [f32; 5] = [1.5, 2.0, 3.0, 4.0, 8.0];
 pub const MINIMAP_SIZES: [f32; 3] = [64.0, 96.0, 128.0];
@@ -42,6 +44,9 @@ pub struct Belumi {
     pub waypoint_labels: bool,
     pub worldmap: bool,
     pub worldmap_key: String,
+    pub freecam: bool,
+    pub freecam_key: String,
+    pub freecam_speed: u8,
 }
 impl Default for Belumi {
     fn default() -> Self {
@@ -73,6 +78,9 @@ impl Default for Belumi {
             waypoint_labels: true,
             worldmap: false,
             worldmap_key: "key.keyboard.m".into(),
+            freecam: false,
+            freecam_key: "key.keyboard.f9".into(),
+            freecam_speed: 1,
         }
     }
 }
@@ -95,6 +103,7 @@ impl Belumi {
         b.zoom_level = b.zoom_level.min(ZOOM_LEVELS.len() as u8 - 1);
         b.minimap_size = b.minimap_size.min(MINIMAP_SIZES.len() as u8 - 1);
         b.minimap_zoom = b.minimap_zoom.min(MINIMAP_ZOOMS.len() as u8 - 1);
+        b.freecam_speed = b.freecam_speed.min(FREECAM_SPEEDS.len() as u8 - 1);
         b
     }
     pub fn serialize(&self) -> String {
@@ -124,6 +133,9 @@ impl Belumi {
     }
     pub fn minimap_blocks_per_pixel(&self) -> f32 {
         MINIMAP_ZOOMS[usize::from(self.minimap_zoom).min(MINIMAP_ZOOMS.len() - 1)]
+    }
+    pub fn freecam_blocks_per_second(&self) -> f32 {
+        FREECAM_SPEEDS[usize::from(self.freecam_speed).min(FREECAM_SPEEDS.len() - 1)]
     }
     pub fn set_key(&mut self, name: &str, value: String) -> bool {
         match SPECS.iter().find(|s| s.key_name() == Some(name)) {
@@ -165,6 +177,9 @@ pub enum Item {
     WaypointLabels,
     Worldmap,
     WorldmapKey,
+    Freecam,
+    FreecamKey,
+    FreecamSpeed,
     Inspector,
     InspectorKey,
     InspectorCorner,
@@ -206,6 +221,7 @@ impl Spec {
 const CORNERS: &[&str] = &["Top left", "Top right", "Bottom left", "Bottom right"];
 const SIZES: &[&str] = &["Small", "Medium", "Large"];
 const MAP_ZOOMS: &[&str] = &["0.5 blocks/px", "1 block/px", "2 blocks/px", "4 blocks/px"];
+const FREECAM_LABELS: &[&str] = &["Slow", "Normal", "Fast", "Very fast"];
 const LEVELS: &[&str] = &["1.5x", "2x", "3x", "4x", "8x"];
 
 fn corner_index(name: &str, default: Corner) -> usize {
@@ -298,6 +314,9 @@ const SPECS: &[Spec] = &[
     switch!(WaypointLabels, "Map markers", "Marks waypoints on the minimap and the world map.", Some(Item::Waypoints), waypoint_labels),
     switch!(Worldmap, "World map", "Remembers explored terrain and shows it in a full-screen overlay.", None, worldmap),
     key!(WorldmapKey, "World map key", Some(Item::Worldmap), WORLDMAP_KEY, worldmap_key),
+    switch!(Freecam, "Freecam", "Detaches the camera from your body: fly around while you stay put. The wheel changes the speed.", None, freecam),
+    key!(FreecamKey, "Freecam key", Some(Item::Freecam), FREECAM_KEY, freecam_key),
+    choice!(FreecamSpeed, "Freecam speed", "How fast the camera flies; sprint triples it.", Some(Item::Freecam), FREECAM_LABELS, freecam_speed),
     switch!(Inspector, "Packet inspector", "A key shows live packet rates, sizes and the latest packets.", None, inspector),
     key!(InspectorKey, "Inspector key", Some(Item::Inspector), INSPECTOR_KEY, inspector_key),
     corner!(InspectorCorner, "Inspector corner", "The screen corner the inspector sits in.", Some(Item::Inspector), inspector_corner, Corner::BottomLeft),
@@ -310,6 +329,7 @@ pub fn rows() -> Vec<Result<Item, &'static str>> {
         ("Zoom", &[Zoom, ZoomKey, ZoomLevel, ZoomSmooth, ZoomScroll]),
         ("Maps", &[Minimap, MinimapCorner, MinimapSize, MinimapZoom, MinimapRotate, MinimapRound, Worldmap, WorldmapKey]),
         ("Waypoints", &[Waypoints, WaypointKey, WaypointList, WaypointLabels]),
+        ("Camera", &[Freecam, FreecamKey, FreecamSpeed]),
         ("Debug", &[Inspector, InspectorKey, InspectorCorner]),
     ];
     sections
@@ -417,6 +437,7 @@ mod tests {
         assert!(b.set_key(WORLDMAP_KEY, "key.keyboard.n".into()));
         assert_eq!(b.worldmap_key, "key.keyboard.n");
         assert!(b.set_key(WAYPOINT_KEY, "key.keyboard.v".into()));
+        assert!(b.set_key(FREECAM_KEY, "key.keyboard.g".into()));
         assert!(!b.set_key("key.jump", "key.keyboard.x".into()));
         assert_eq!(Item::ZoomKey.key_name(), Some(ZOOM_KEY));
         assert_eq!(Item::Hud.key_name(), None);

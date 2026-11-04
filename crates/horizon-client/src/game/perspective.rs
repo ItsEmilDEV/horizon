@@ -216,6 +216,9 @@ impl Game<'_> {
     /// front of) it, pulled in where visual shapes are in the way. Returns the
     /// position, yaw and pitch to render from.
     pub(super) fn camera_view(&mut self, partial: f32) -> Option<(glam::DVec3, f32, f32)> {
+        if let Some(view) = self.belumi_freecam_view() {
+            return Some(view);
+        }
         // Minecraft.cameraEntity: a server's spectator camera on a mob or
         // another player.
         let (entity, descending) = match self.camera_mob() {

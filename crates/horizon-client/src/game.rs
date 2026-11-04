@@ -50,6 +50,7 @@ mod beacon;
 mod beds;
 mod beehives;
 mod belumi;
+mod belumi_freecam;
 mod belumi_maps;
 mod block_entity_anims;
 mod block_entity_ticks;
@@ -2100,6 +2101,7 @@ struct Game<'a> {
     extras: extras::ExtrasState,
     belumi: belumi::BelumiState,
     belumi_maps: belumi_maps::MapState,
+    belumi_free: belumi_freecam::FreecamState,
     /// Horizon mods (`game/mods.rs`), none running unless turned on.
     mods: mods::ModsState,
     /// Every item and recipe, for mods (`game/native_recipes.rs`), made once.
@@ -5855,6 +5857,7 @@ impl Game<'_> {
         let riding = self.riding.is_some();
         let entity_collisions = self.player_entity_collisions();
         let spin_targets = self.spin_targets();
+        let freecam = self.belumi_freecam_active();
         let sprint_window = self.settings.sprint_window;
         self.sync_player_body();
         let Some(player) = self.player.as_mut() else {
@@ -5872,7 +5875,7 @@ impl Game<'_> {
         if !self.streaming.is_lit(cx, cz) {
             return Ok(());
         }
-        let playing = self.screen == Screen::Playing && self.sleeping.is_none();
+        let playing = self.screen == Screen::Playing && self.sleeping.is_none() && !freecam;
         let held = |k| playing && self.keys.contains(&k);
         let keys = Keys {
             forward: held(KeyCode::KeyW),
@@ -6382,8 +6385,12 @@ impl Game<'_> {
             .handle_accumulated_movement(time, active, grabbed, look)
         {
             self.tutorial.mouse(xo, yo);
-            let zoom = self.zoom_turn_scale();
-            self.turn_player(xo * zoom, yo * zoom);
+            if self.belumi_freecam_active() {
+                self.belumi_freecam_turn(xo, yo);
+            } else {
+                let zoom = self.zoom_turn_scale();
+                self.turn_player(xo * zoom, yo * zoom);
+            }
         }
     }
     /// `Minecraft.pause`: a single-player game with a pausing screen open.
@@ -8707,6 +8714,9 @@ impl Game<'_> {
     /// `Camera.setRotation`: the camera's orientation, turned round in
     /// third-person front view.
     pub(super) fn camera_orientation(&self) -> glam::Quat {
+        if let Some((_, yaw, pitch)) = self.belumi_freecam_view() {
+            return camera_rotation(self.camera_type, yaw, pitch);
+        }
         camera_rotation(self.camera_type, self.yaw, self.pitch)
     }
     /// ItemEntityRenderer: items bob and spin; blocks render as small cubes.
@@ -13354,7 +13364,7 @@ impl Game<'_> {
     }
     /// A mouse button while playing (window or control socket).
     fn play_mouse(&mut self, button: MouseButton, pressed: bool) -> Result<()> {
-        if self.sleeping.is_some() {
+        if self.sleeping.is_some() || self.belumi_freecam_active() {
             return Ok(());
         }
         // key.spectatorHotbar (the middle button) opens the spectator menu
@@ -15142,6 +15152,7 @@ impl<'a> Game<'a> {
             extras: Default::default(),
             belumi: Default::default(),
             belumi_maps: Default::default(),
+            belumi_free: Default::default(),
             mods: Default::default(),
             recipe_tables: Default::default(),
             panel: Default::default(),

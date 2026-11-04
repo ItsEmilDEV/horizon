@@ -965,9 +965,6 @@ pub struct Spawned {
 
 /// `NaturalSpawner.spawnForChunk` for the categories already filtered.
 #[allow(clippy::too_many_arguments)]
-pub static C: [std::sync::atomic::AtomicU64; 8] = [const { std::sync::atomic::AtomicU64::new(0) }; 8];
-pub fn bump(i: usize) { C[i].fetch_add(1, std::sync::atomic::Ordering::Relaxed); }
-
 pub fn spawn_for_chunk<L: NaturalLevel, R: RandomSource>(
     l: &L,
     random: &mut R,
@@ -978,9 +975,7 @@ pub fn spawn_for_chunk<L: NaturalLevel, R: RandomSource>(
     trace: &mut dyn FnMut(Event),
 ) {
     for &category in categories {
-        bump(0);
         let local = state.can_spawn_local(category, chunk.0, chunk.1);
-        if local { bump(1); }
         trace(Event::Local(category, local));
         if local {
             spawn_category_for_chunk(l, random, state, category, chunk, spawn, trace);
@@ -1025,7 +1020,6 @@ pub fn spawn_category_for_position<L: NaturalLevel, R: RandomSource>(
     if l.mob_data().state(l.state(x0, y, z0)).flags & super::data::REDSTONE_CONDUCTOR != 0 {
         return;
     }
-    bump(7);
     let mut spawned: Vec<Aabb> = Vec::new();
     let mut cluster = 0u32;
     let mut nearest = Nearest::new(start);
@@ -1042,14 +1036,12 @@ pub fn spawn_category_for_position<L: NaturalLevel, R: RandomSource>(
             z += random.next_int_bound(6).unwrap_or(0) - random.next_int_bound(6).unwrap_or(0);
             let (xx, zz) = (f64::from(x) + 0.5, f64::from(z) + 0.5);
             trace(Event::Try(x, z));
-            bump(2);
             let Some(distance) = nearest.distance_sqr(l, xx, f64::from(y), zz) else {
                 continue;
             };
             if !right_distance(l, chunk, [x, y, z], distance) {
                 continue;
             }
-            bump(3);
             if current.is_none() {
                 let list = if category == Category::WaterAmbient
                     && l.biome_tag("minecraft:reduce_water_ambient_spawns", x, y, z)
@@ -1082,13 +1074,11 @@ pub fn spawn_category_for_position<L: NaturalLevel, R: RandomSource>(
             let Some((species, width, height, type_category)) = (*kind).filter(|_| valid) else {
                 continue;
             };
-            bump(4);
             let passed = state.can_spawn(l, &entry.entity, [x, y, z]);
             trace(Event::Test(entry.entity.clone(), [x, y, z], passed));
             if !passed {
                 continue;
             }
-            bump(5);
             // getMobForSpawn (a type the game cannot create, which would end
             // the pass, never passes isValidSpawnPostitionForType).
             let yaw = random.next_float() * 360.0;
@@ -1112,7 +1102,6 @@ pub fn spawn_category_for_position<L: NaturalLevel, R: RandomSource>(
             let Some(result) = spawn(l, &request) else {
                 continue;
             };
-            bump(6);
             group_index += 1;
             spawned.push(result.bounds);
             cluster += 1;
