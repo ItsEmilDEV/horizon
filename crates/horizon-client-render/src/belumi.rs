@@ -14,6 +14,12 @@ pub const VOICE_MUTE_KEY: &str = "belumi.voice_mute";
 pub const VOICE_THRESHOLDS: [f32; 4] = [-60.0, -50.0, -40.0, -30.0];
 pub const VOICE_MIC_GAINS: [f32; 4] = [0.5, 1.0, 1.5, 2.0];
 pub const VOICE_VOLUMES: [f32; 4] = [0.5, 1.0, 1.5, 2.0];
+pub const FX_VIGNETTE: [f32; 4] = [0.0, 0.25, 0.45, 0.7];
+pub const FX_SATURATION: [f32; 5] = [0.7, 0.85, 1.0, 1.2, 1.4];
+pub const FX_CONTRAST: [f32; 5] = [0.9, 1.0, 1.1, 1.2, 1.3];
+pub const FX_WARMTH: [f32; 5] = [-1.0, -0.5, 0.0, 0.5, 1.0];
+pub const FX_SHARPEN: [f32; 4] = [0.0, 0.25, 0.5, 0.9];
+pub const FX_GRAIN: [f32; 4] = [0.0, 0.03, 0.06, 0.1];
 pub const FREECAM_SPEEDS: [f32; 4] = [5.0, 12.0, 30.0, 60.0];
 
 pub const ZOOM_LEVELS: [f32; 5] = [1.5, 2.0, 3.0, 4.0, 8.0];
@@ -50,6 +56,13 @@ pub struct Belumi {
     pub waypoint_labels: bool,
     pub worldmap: bool,
     pub worldmap_key: String,
+    pub effects: bool,
+    pub fx_vignette: u8,
+    pub fx_saturation: u8,
+    pub fx_contrast: u8,
+    pub fx_warmth: u8,
+    pub fx_sharpen: u8,
+    pub fx_grain: u8,
     pub voice: bool,
     pub voice_mode: u8,
     pub voice_key: String,
@@ -93,6 +106,13 @@ impl Default for Belumi {
             waypoint_labels: true,
             worldmap: false,
             worldmap_key: "key.keyboard.m".into(),
+            effects: false,
+            fx_vignette: 0,
+            fx_saturation: 2,
+            fx_contrast: 1,
+            fx_warmth: 2,
+            fx_sharpen: 0,
+            fx_grain: 0,
             voice: false,
             voice_mode: 0,
             voice_key: "key.keyboard.v".into(),
@@ -128,6 +148,12 @@ impl Belumi {
         b.minimap_size = b.minimap_size.min(MINIMAP_SIZES.len() as u8 - 1);
         b.minimap_zoom = b.minimap_zoom.min(MINIMAP_ZOOMS.len() as u8 - 1);
         b.freecam_speed = b.freecam_speed.min(FREECAM_SPEEDS.len() as u8 - 1);
+        b.fx_vignette = b.fx_vignette.min(FX_VIGNETTE.len() as u8 - 1);
+        b.fx_saturation = b.fx_saturation.min(FX_SATURATION.len() as u8 - 1);
+        b.fx_contrast = b.fx_contrast.min(FX_CONTRAST.len() as u8 - 1);
+        b.fx_warmth = b.fx_warmth.min(FX_WARMTH.len() as u8 - 1);
+        b.fx_sharpen = b.fx_sharpen.min(FX_SHARPEN.len() as u8 - 1);
+        b.fx_grain = b.fx_grain.min(FX_GRAIN.len() as u8 - 1);
         b.voice_mode = b.voice_mode.min(1);
         b.voice_threshold = b.voice_threshold.min(VOICE_THRESHOLDS.len() as u8 - 1);
         b.voice_mic = b.voice_mic.min(VOICE_MIC_GAINS.len() as u8 - 1);
@@ -152,6 +178,17 @@ impl Belumi {
     }
     pub fn minimap_corner(&self) -> Corner {
         corner_of(&self.minimap_corner, Corner::TopRight)
+    }
+    pub fn fx_values(&self) -> [f32; 6] {
+        let at = |t: &[f32], i: u8| t[usize::from(i).min(t.len() - 1)];
+        [
+            at(&FX_CONTRAST, self.fx_contrast),
+            at(&FX_SATURATION, self.fx_saturation),
+            at(&FX_VIGNETTE, self.fx_vignette),
+            at(&FX_SHARPEN, self.fx_sharpen),
+            at(&FX_GRAIN, self.fx_grain),
+            at(&FX_WARMTH, self.fx_warmth),
+        ]
     }
     pub fn voice_threshold_db(&self) -> f32 {
         VOICE_THRESHOLDS[usize::from(self.voice_threshold).min(VOICE_THRESHOLDS.len() - 1)]
@@ -217,6 +254,13 @@ pub enum Item {
     WaypointLabels,
     Worldmap,
     WorldmapKey,
+    Effects,
+    FxVignette,
+    FxSaturation,
+    FxContrast,
+    FxWarmth,
+    FxSharpen,
+    FxGrain,
     Voice,
     VoiceMode,
     VoiceKey,
@@ -271,6 +315,12 @@ const CORNERS: &[&str] = &["Top left", "Top right", "Bottom left", "Bottom right
 const SIZES: &[&str] = &["Small", "Medium", "Large"];
 const MAP_ZOOMS: &[&str] = &["0.5 blocks/px", "1 block/px", "2 blocks/px", "4 blocks/px"];
 const FREECAM_LABELS: &[&str] = &["Slow", "Normal", "Fast", "Very fast"];
+const FX_VIGNETTE_LABELS: &[&str] = &["Off", "Light", "Medium", "Strong"];
+const FX_SATURATION_LABELS: &[&str] = &["70%", "85%", "100%", "120%", "140%"];
+const FX_CONTRAST_LABELS: &[&str] = &["90%", "100%", "110%", "120%", "130%"];
+const FX_WARMTH_LABELS: &[&str] = &["Cold", "Cool", "Neutral", "Warm", "Hot"];
+const FX_SHARPEN_LABELS: &[&str] = &["Off", "Low", "Medium", "High"];
+const FX_GRAIN_LABELS: &[&str] = &["Off", "Low", "Medium", "High"];
 const VOICE_MODES: &[&str] = &["Push to talk", "Voice activation"];
 const VOICE_THRESHOLD_LABELS: &[&str] = &["-60 dB (sensitive)", "-50 dB", "-40 dB", "-30 dB (loud only)"];
 const VOICE_GAIN_LABELS: &[&str] = &["50%", "100%", "150%", "200%"];
@@ -366,6 +416,13 @@ const SPECS: &[Spec] = &[
     switch!(WaypointLabels, "Map markers", "Marks waypoints on the minimap and the world map.", Some(Item::Waypoints), waypoint_labels),
     switch!(Worldmap, "World map", "Remembers explored terrain and shows it in a full-screen overlay.", None, worldmap),
     key!(WorldmapKey, "World map key", Some(Item::Worldmap), WORLDMAP_KEY, worldmap_key),
+    switch!(Effects, "Screen effects", "Colour grading, sharpening, vignette and film grain, applied in the pass that already draws the screen (about 0.1 ms).", None, effects),
+    choice!(FxVignette, "Vignette", "Darkens the screen edges.", Some(Item::Effects), FX_VIGNETTE_LABELS, fx_vignette),
+    choice!(FxSaturation, "Saturation", "How vivid colours are.", Some(Item::Effects), FX_SATURATION_LABELS, fx_saturation),
+    choice!(FxContrast, "Contrast", "Separates light from dark.", Some(Item::Effects), FX_CONTRAST_LABELS, fx_contrast),
+    choice!(FxWarmth, "Colour temperature", "Shifts the image toward blue or orange.", Some(Item::Effects), FX_WARMTH_LABELS, fx_warmth),
+    choice!(FxSharpen, "Sharpen", "Brings out texture detail.", Some(Item::Effects), FX_SHARPEN_LABELS, fx_sharpen),
+    choice!(FxGrain, "Film grain", "Fine moving noise.", Some(Item::Effects), FX_GRAIN_LABELS, fx_grain),
     switch!(Voice, "Voice chat", "Talks to other players on servers with the Simple Voice Chat mod (needs a build with voice support).", None, voice),
     choice!(VoiceMode, "Microphone mode", "Push to talk sends only while the key is held; voice activation opens on sound.", Some(Item::Voice), VOICE_MODES, voice_mode),
     key!(VoiceKey, "Push-to-talk key", Some(Item::Voice), VOICE_KEY, voice_key),
@@ -390,6 +447,7 @@ pub fn rows() -> Vec<Result<Item, &'static str>> {
         ("Zoom", &[Zoom, ZoomKey, ZoomLevel, ZoomSmooth, ZoomScroll]),
         ("Maps", &[Minimap, MinimapCorner, MinimapSize, MinimapZoom, MinimapRotate, MinimapRound, Worldmap, WorldmapKey]),
         ("Waypoints", &[Waypoints, WaypointKey, WaypointList, WaypointLabels]),
+        ("Screen effects", &[Effects, FxVignette, FxSaturation, FxContrast, FxWarmth, FxSharpen, FxGrain]),
         ("Voice chat", &[Voice, VoiceMode, VoiceKey, VoiceMuteKey, VoiceThreshold, VoiceMic, VoiceVolume]),
         ("Plugins", &[Plugins, PluginCorner]),
         ("Camera", &[Freecam, FreecamKey, FreecamSpeed]),

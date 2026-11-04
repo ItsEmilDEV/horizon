@@ -50,7 +50,72 @@ struct TaaResources {
     uniform: wgpu::Buffer,
 }
 
+/// Belumi's built-in effects, neutral by default (`belumi.toml`, docs/effects.md).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Effects {
+    pub contrast: f32,
+    pub saturation: f32,
+    pub vignette: f32,
+    pub sharpen: f32,
+    pub grain: f32,
+    /// -1 cool .. 1 warm.
+    pub warmth: f32,
+    pub seconds: f32,
+}
+
+impl Default for Effects {
+    fn default() -> Self {
+        Self {
+            contrast: 1.0,
+            saturation: 1.0,
+            vignette: 0.0,
+            sharpen: 0.0,
+            grain: 0.0,
+            warmth: 0.0,
+            seconds: 0.0,
+        }
+    }
+}
+
+impl Effects {
+    pub fn active(&self) -> bool {
+        self.contrast != 1.0
+            || self.saturation != 1.0
+            || self.vignette != 0.0
+            || self.sharpen != 0.0
+            || self.grain != 0.0
+            || self.warmth != 0.0
+    }
+
+    fn uniform(&self) -> FxUniform {
+        let w = self.warmth.clamp(-1.0, 1.0);
+        FxUniform {
+            grade: [self.contrast, self.saturation, self.vignette, self.sharpen],
+            tint: [1.0 + 0.08 * w, 1.0, 1.0 - 0.08 * w, self.grain],
+            time: [self.seconds.rem_euclid(64.0), 0.0, 0.0, 0.0],
+        }
+    }
+}
+
+/// `world_post.wgsl`'s `Fx`.
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct FxUniform {
+    grade: [f32; 4],
+    tint: [f32; 4],
+    time: [f32; 4],
+}
+
+struct FxResources {
+    copy: wgpu::RenderPipeline,
+    fxaa: wgpu::RenderPipeline,
+    buffer: wgpu::Buffer,
+    group: wgpu::BindGroup,
+}
+
 pub struct Post {
+    fx: FxResources,
+    pub effects: Effects,
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     copy: wgpu::RenderPipeline,
@@ -226,6 +291,44 @@ impl Post {
                 }
             }
         };
+        let fx_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Belumi effects bindings"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: wgpu::BufferSize::new(size_of::<FxUniform>() as u64),
+                },
+                count: None,
+            }],
+        });
+        let fx_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Belumi effects"),
+            bind_group_layouts: &[Some(&layout), Some(&fx_layout)],
+            ..Default::default()
+        });
+        let fx_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Belumi effects"),
+            size: size_of::<FxUniform>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let fx_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Belumi effects"),
+            layout: &fx_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: fx_buffer.as_entire_binding(),
+            }],
+        });
+        let fx = FxResources {
+            copy: pipeline("fs_copy_fx", &fx_pipeline_layout, format),
+            fxaa: pipeline("fs_fxaa_fx", &fx_pipeline_layout, format),
+            buffer: fx_buffer,
+            group: fx_group,
+        };
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Horizon post"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -233,6 +336,8 @@ impl Post {
             ..Default::default()
         });
         Self {
+            fx,
+            effects: Effects::default(),
             copy: pipeline("fs_copy", &pipeline_layout, format),
             fxaa: pipeline("fs_fxaa", &pipeline_layout, format),
             layout,
@@ -248,6 +353,14 @@ impl Post {
             taa_frame: 0,
             taa_previous: None,
             taa_this_frame: bytemuck::Zeroable::zeroed(),
+        }
+    }
+
+    pub fn set_effects(&mut self, queue: &wgpu::Queue, effects: Effects) {
+        let was = self.effects;
+        self.effects = effects;
+        if effects.active() && (effects != was) {
+            queue.write_buffer(&self.fx.buffer, 0, bytemuck::bytes_of(&effects.uniform()));
         }
     }
 
@@ -308,7 +421,12 @@ impl Post {
         window: [u32; 2],
         always: bool,
     ) -> Option<(wgpu::TextureView, wgpu::TextureView)> {
-        if self.scale == 1.0 && !self.antialias && !self.taa_on && !always {
+        if self.scale == 1.0
+            && !self.antialias
+            && !self.taa_on
+            && !always
+            && !self.effects.active()
+        {
             self.target = None;
             return None;
         }
@@ -488,11 +606,20 @@ impl Post {
             color_attachments: &attachments,
             ..Default::default()
         });
-        pass.set_pipeline(if self.antialias {
-            &self.fxaa
+        if self.effects.active() {
+            pass.set_pipeline(if self.antialias {
+                &self.fx.fxaa
+            } else {
+                &self.fx.copy
+            });
+            pass.set_bind_group(1, &self.fx.group, &[]);
         } else {
-            &self.copy
-        });
+            pass.set_pipeline(if self.antialias {
+                &self.fxaa
+            } else {
+                &self.copy
+            });
+        }
         pass.set_bind_group(0, group, &[]);
         pass.draw(0..3, 0..1);
     }
@@ -531,6 +658,32 @@ mod tests {
         let then = reprojection(previous, previous_camera, current, camera) * (now / now.w);
         let expected = clip(previous, previous_camera);
         assert!((then.truncate() / then.w - expected.truncate() / expected.w).length() < 1e-9);
+    }
+
+    #[test]
+    fn effects_are_neutral_by_default_and_each_knob_activates_them() {
+        let d = Effects::default();
+        assert!(!d.active());
+        for e in [
+            Effects { contrast: 1.1, ..d },
+            Effects { saturation: 0.9, ..d },
+            Effects { vignette: 0.2, ..d },
+            Effects { sharpen: 0.2, ..d },
+            Effects { grain: 0.05, ..d },
+            Effects { warmth: -0.5, ..d },
+        ] {
+            assert!(e.active());
+        }
+        assert_eq!(size_of::<FxUniform>(), 48);
+    }
+
+    #[test]
+    fn warmth_shifts_red_against_blue_and_time_wraps() {
+        let warm = Effects { warmth: 1.0, seconds: 130.5, ..Effects::default() }.uniform();
+        assert!(warm.tint[0] > 1.0 && warm.tint[2] < 1.0 && warm.tint[1] == 1.0);
+        assert!((warm.time[0] - 2.5).abs() < 1e-4);
+        let cool = Effects { warmth: -1.0, ..Effects::default() }.uniform();
+        assert!(cool.tint[0] < 1.0 && cool.tint[2] > 1.0);
     }
 
     #[test]

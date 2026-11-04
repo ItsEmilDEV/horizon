@@ -42,7 +42,28 @@ impl BelumiState {
 }
 
 impl Game<'_> {
+    pub(super) fn belumi_effects(&mut self) {
+        let cfg = &self.settings.belumi;
+        let mut fx = horizon_client::gfx::Effects::default();
+        if cfg.effects {
+            let [contrast, saturation, vignette, sharpen, grain, warmth] = cfg.fx_values();
+            fx = horizon_client::gfx::Effects {
+                contrast,
+                saturation,
+                vignette,
+                sharpen,
+                grain,
+                warmth,
+                seconds: if grain > 0.0 { self.started.elapsed().as_secs_f32() } else { 0.0 },
+            };
+        }
+        if let Some(r) = self.renderer.as_mut() {
+            r.set_effects(fx);
+        }
+    }
+
     pub(super) fn belumi_frame(&mut self, elapsed: std::time::Duration) {
+        self.belumi_effects();
         let dt = elapsed.as_secs_f32();
         let Some(p) = self.native_player() else {
             self.belumi.last_position = None;

@@ -28,13 +28,17 @@ fn luma(c: vec3<f32>) -> f32 {
 
 // FXAA 3.11 (console quality): blend along the local edge direction.
 @fragment fn fs_fxaa(in: PostOut) -> @location(0) vec4<f32> {
+    return fxaa(in.uv);
+}
+
+fn fxaa(uv: vec2<f32>) -> vec4<f32> {
     let texel = 1.0 / vec2<f32>(textureDimensions(world));
-    let centre = textureSampleLevel(world, world_sampler, in.uv, 0.0);
+    let centre = textureSampleLevel(world, world_sampler, uv, 0.0);
     let rgb_m = centre.rgb;
-    let nw = luma(textureSampleLevel(world, world_sampler, in.uv + vec2(-0.5, -0.5) * texel, 0.0).rgb);
-    let ne = luma(textureSampleLevel(world, world_sampler, in.uv + vec2(0.5, -0.5) * texel, 0.0).rgb);
-    let sw = luma(textureSampleLevel(world, world_sampler, in.uv + vec2(-0.5, 0.5) * texel, 0.0).rgb);
-    let se = luma(textureSampleLevel(world, world_sampler, in.uv + vec2(0.5, 0.5) * texel, 0.0).rgb);
+    let nw = luma(textureSampleLevel(world, world_sampler, uv + vec2(-0.5, -0.5) * texel, 0.0).rgb);
+    let ne = luma(textureSampleLevel(world, world_sampler, uv + vec2(0.5, -0.5) * texel, 0.0).rgb);
+    let sw = luma(textureSampleLevel(world, world_sampler, uv + vec2(-0.5, 0.5) * texel, 0.0).rgb);
+    let se = luma(textureSampleLevel(world, world_sampler, uv + vec2(0.5, 0.5) * texel, 0.0).rgb);
     let m = luma(rgb_m);
     let lo = min(m, min(min(nw, ne), min(sw, se)));
     let hi = max(m, max(max(nw, ne), max(sw, se)));
@@ -45,10 +49,10 @@ fn luma(c: vec3<f32>) -> f32 {
     let reduce = max((nw + ne + sw + se) * 0.25 * 0.125, 1.0 / 128.0);
     let scale = 1.0 / (min(abs(dir.x), abs(dir.y)) + reduce);
     dir = clamp(dir * scale, vec2(-8.0), vec2(8.0)) * texel;
-    let a = 0.5 * (textureSampleLevel(world, world_sampler, in.uv + dir * (1.0 / 3.0 - 0.5), 0.0).rgb
-        + textureSampleLevel(world, world_sampler, in.uv + dir * (2.0 / 3.0 - 0.5), 0.0).rgb);
-    let b = a * 0.5 + 0.25 * (textureSampleLevel(world, world_sampler, in.uv - dir * 0.5, 0.0).rgb
-        + textureSampleLevel(world, world_sampler, in.uv + dir * 0.5, 0.0).rgb);
+    let a = 0.5 * (textureSampleLevel(world, world_sampler, uv + dir * (1.0 / 3.0 - 0.5), 0.0).rgb
+        + textureSampleLevel(world, world_sampler, uv + dir * (2.0 / 3.0 - 0.5), 0.0).rgb);
+    let b = a * 0.5 + 0.25 * (textureSampleLevel(world, world_sampler, uv - dir * 0.5, 0.0).rgb
+        + textureSampleLevel(world, world_sampler, uv + dir * 0.5, 0.0).rgb);
     let lb = luma(b);
     if lb < lo || lb > hi {
         return vec4(a, centre.a);
@@ -130,4 +134,54 @@ fn sample_history(uv: vec2<f32>) -> vec3<f32> {
     let share = 0.1 * exp(-2.0 * dot(off, off));
     // The alpha carries the emissive mark through to HDR output (hdr.wgsl).
     return vec4(mix(past, centre.rgb, share), centre.a);
+}
+
+// Belumi's built-in effects (belumi.toml): sharpen, contrast, saturation, warmth, vignette
+// and film grain, folded into the copy or FXAA pass that already writes the screen.
+struct Fx {
+    // x: contrast, y: saturation, z: vignette strength, w: sharpen amount.
+    grade: vec4<f32>,
+    // rgb: multiplier (warmth), w: grain strength.
+    tint: vec4<f32>,
+    // x: seconds, wrapped.
+    time: vec4<f32>,
+};
+@group(1) @binding(0) var<uniform> fx: Fx;
+
+fn hash21(p: vec2<f32>) -> f32 {
+    var q = fract(p * vec2(123.34, 456.21));
+    q += dot(q, q + 45.32);
+    return fract(q.x * q.y);
+}
+
+fn apply_fx(base: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
+    var c = base.rgb;
+    if fx.grade.w > 0.0 {
+        let t = 1.0 / vec2<f32>(textureDimensions(world));
+        let around = 0.25 * (
+            textureSampleLevel(world, world_sampler, uv + vec2(t.x, 0.0), 0.0).rgb
+            + textureSampleLevel(world, world_sampler, uv - vec2(t.x, 0.0), 0.0).rgb
+            + textureSampleLevel(world, world_sampler, uv + vec2(0.0, t.y), 0.0).rgb
+            + textureSampleLevel(world, world_sampler, uv - vec2(0.0, t.y), 0.0).rgb);
+        c = c + (c - around) * fx.grade.w;
+    }
+    c = (c - vec3(0.5)) * fx.grade.x + vec3(0.5);
+    c = mix(vec3(luma(c)), c, fx.grade.y);
+    c = c * fx.tint.rgb;
+    let r = length((uv - vec2(0.5)) * vec2(1.6, 1.0) * 2.0);
+    c = c * (1.0 - fx.grade.z * smoothstep(0.6, 1.9, r));
+    if fx.tint.w > 0.0 {
+        let size = vec2<f32>(textureDimensions(world));
+        let n = hash21(floor(uv * size) + vec2(fx.time.x * 61.0, fx.time.x * 37.0)) - 0.5;
+        c = c + vec3(n * fx.tint.w * (1.0 - 0.5 * luma(c)));
+    }
+    return vec4(max(c, vec3(0.0)), base.a);
+}
+
+@fragment fn fs_copy_fx(in: PostOut) -> @location(0) vec4<f32> {
+    return apply_fx(textureSampleLevel(world, world_sampler, in.uv, 0.0), in.uv);
+}
+
+@fragment fn fs_fxaa_fx(in: PostOut) -> @location(0) vec4<f32> {
+    return apply_fx(fxaa(in.uv), in.uv);
 }

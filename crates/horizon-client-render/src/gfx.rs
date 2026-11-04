@@ -105,6 +105,7 @@ pub(crate) mod upload;
 mod view;
 mod wgsl_prefix;
 mod world_post;
+pub use world_post::Effects;
 
 /// A section's instance: its camera-relative origin and, in `w`, the step of
 /// its fixed-point UVs (`terrain.wgsl`'s `terrain_uv`).
@@ -3486,6 +3487,9 @@ impl Renderer {
         };
         crate::graphics::report(now);
         true
+    }
+    pub fn set_effects(&mut self, effects: world_post::Effects) {
+        self.world_post.set_effects(&self.queue, effects);
     }
     /// `upscale`: output pixels per rendered pixel, for TAA to rebuild (1: native).
     pub fn set_world_post(&mut self, scale: f32, antialias: bool, taa: bool, upscale: f32) {
