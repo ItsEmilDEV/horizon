@@ -1282,7 +1282,18 @@ impl Game<'_> {
                 // placed; the player is told and the blocks below go back.
                 // mayInteract: nothing is used on a block outside the world
                 // border either.
-                if self.under_spawn_protection(host, gi, p.pos) {
+                let vetoed = horizon_client::belumi_hooks::emit(
+                    horizon_client::belumi_hooks::BelumiEvent::UseBlock {
+                        uuid: host.hub.guests[gi].uuid,
+                        dimension: &host.hub.guests[gi].dimension,
+                        pos: p.pos,
+                        face: p.face as u8,
+                        off_hand: p.hand == 1,
+                    },
+                );
+                if vetoed {
+                    // The correction below puts the blocks back for the client.
+                } else if self.under_spawn_protection(host, gi, p.pos) {
                     self.spawn_protection_message(host, conn, p.pos);
                 } else if self
                     .border
@@ -2493,6 +2504,11 @@ impl Game<'_> {
         let g = &mut host.hub.guests[gi];
         if g.health <= 0.0 && !g.dead {
             g.dead = true;
+            horizon_client::belumi_hooks::emit(horizon_client::belumi_hooks::BelumiEvent::PlayerDeath {
+                uuid: g.uuid,
+                dimension: &g.dimension,
+                pos: g.position.map(|v| v.floor() as i32),
+            });
             g.last_death = Some((g.dimension.clone(), g.position.map(|v| v.floor() as i32)));
             let (id, at) = (g.entity_id, g.position);
             let reward = Experience {

@@ -716,7 +716,14 @@ impl Hub {
             name: &guest.name,
         });
         self.guests.push(guest);
+        self.publish_roster();
         conn
+    }
+
+    /// Tells the plugins who is online (on join and quit only).
+    fn publish_roster(&self) {
+        let list: Vec<(u128, &str)> = self.guests.iter().map(|g| (g.uuid, g.name.as_str())).collect();
+        crate::belumi_hooks::set_roster(&list);
     }
 
     /// The permission level a player gets: an integrated server gives every
@@ -1198,7 +1205,7 @@ impl Hub {
     /// packets queued for its own level's pass.
     pub fn poll(&mut self, ctx: &mut TickCtx) -> Vec<HostEvent> {
         self.ticks += 1;
-        for action in crate::belumi_hooks::sync(self.guests.len()) {
+        for action in crate::belumi_hooks::sync() {
             self.apply_belumi_action(action);
         }
         crate::belumi_hooks::emit(crate::belumi_hooks::BelumiEvent::Tick(self.ticks as u64));
@@ -1363,6 +1370,7 @@ impl Hub {
 
     fn remove_guest(&mut self, i: usize, reason: &str) -> Guest {
         let mut g = self.guests.remove(i);
+        self.publish_roster();
         crate::belumi_hooks::emit(crate::belumi_hooks::BelumiEvent::PlayerQuit {
             uuid: g.uuid,
             name: &g.name,

@@ -7,6 +7,8 @@ pub enum BelumiEvent<'a> {
     Chat { uuid: u128, message: &'a str },
     Command { uuid: u128, command: &'a str },
     BlockBreak { uuid: u128, dimension: &'a str, pos: [i32; 3] },
+    PlayerDeath { uuid: u128, dimension: &'a str, pos: [i32; 3] },
+    UseBlock { uuid: u128, dimension: &'a str, pos: [i32; 3], face: u8, off_hand: bool },
 }
 
 pub enum BelumiAction {
@@ -30,12 +32,22 @@ mod host {
         u128::from_str_radix(&hex, 16).ok()
     }
 
-    pub fn sync(players: usize) -> Vec<super::BelumiAction> {
+    pub fn set_roster(players: &[(u128, &str)]) {
+        if let Some(m) = MANAGER.lock().unwrap().as_mut() {
+            let list: Vec<(String, String)> = players
+                .iter()
+                .map(|(u, n)| (uuid_string(*u), (*n).to_owned()))
+                .collect();
+            m.set_roster(&list);
+        }
+    }
+
+    pub fn sync() -> Vec<super::BelumiAction> {
         let mut guard = MANAGER.lock().unwrap();
         let Some(m) = guard.as_mut() else {
             return Vec::new();
         };
-        m.sync(players)
+        m.sync()
             .into_iter()
             .filter_map(|a| {
                 Some(match a {
@@ -90,9 +102,32 @@ mod host {
         serde_json::json!({"type": "root", "children": children})
     }
 
-    pub(super) fn run_plugin_command(uuid: u128, line: &str) -> bool {
+    /// `permission` is the player's operator level (0-4).
+    pub(super) fn run_plugin_command(uuid: u128, permission: u8, line: &str) -> bool {
+        use belumi_server::CommandOutcome;
         let mut guard = MANAGER.lock().unwrap();
-        guard.as_mut().is_some_and(|m| m.try_command(&uuid_string(uuid), line))
+        let Some(m) = guard.as_mut() else {
+            return false;
+        };
+        let id = uuid_string(uuid);
+        if line.trim().trim_start_matches('/').eq_ignore_ascii_case("belumi reload") {
+            if permission < 4 {
+                m.notify(&id, "You do not have permission to use this command.");
+            } else {
+                match m.reload() {
+                    Ok(n) => {
+                        log::info!("[belumi] reloaded, {n} plugin(s) loaded");
+                        m.notify(&id, &format!("Reloaded {n} plugin(s)."));
+                    }
+                    Err(e) => {
+                        log::error!("[belumi] reload failed: {e}");
+                        m.notify(&id, "Reload failed, see the server log.");
+                    }
+                }
+            }
+            return true;
+        }
+        m.try_command(&id, permission, line) != CommandOutcome::NotPlugin
     }
 
     pub fn emit(event: BelumiEvent<'_>) -> bool {
@@ -127,6 +162,22 @@ mod host {
                 y: pos[1],
                 z: pos[2],
             },
+            BelumiEvent::PlayerDeath { uuid, dimension, pos } => Event::PlayerDeath {
+                uuid: uuid_string(uuid),
+                dimension: dimension.to_owned(),
+                x: pos[0],
+                y: pos[1],
+                z: pos[2],
+            },
+            BelumiEvent::UseBlock { uuid, dimension, pos, face, off_hand } => Event::UseBlock {
+                uuid: uuid_string(uuid),
+                dimension: dimension.to_owned(),
+                x: pos[0],
+                y: pos[1],
+                z: pos[2],
+                face,
+                off_hand,
+            },
         };
         m.emit(&e) == EventResult::Cancel
     }
@@ -140,7 +191,7 @@ mod host {
     pub fn init_plugins(_dir: &Path) {}
 
     #[inline(always)]
-    pub(super) fn run_plugin_command(_uuid: u128, _line: &str) -> bool {
+    pub(super) fn run_plugin_command(_uuid: u128, _permission: u8, _line: &str) -> bool {
         false
     }
 
@@ -149,7 +200,10 @@ mod host {
     }
 
     #[inline(always)]
-    pub fn sync(_players: usize) -> Vec<super::BelumiAction> {
+    pub fn set_roster(_players: &[(u128, &str)]) {}
+
+    #[inline(always)]
+    pub fn sync() -> Vec<super::BelumiAction> {
         Vec::new()
     }
 
@@ -159,10 +213,10 @@ mod host {
     }
 }
 
-pub use host::{command_tree, emit, init_plugins, sync};
+pub use host::{command_tree, emit, init_plugins, set_roster, sync};
 
-pub fn command(uuid: u128, line: &str) -> bool {
-    host::run_plugin_command(uuid, line) || emit(BelumiEvent::Command { uuid, command: line })
+pub fn command(uuid: u128, permission: u8, line: &str) -> bool {
+    host::run_plugin_command(uuid, permission, line) || emit(BelumiEvent::Command { uuid, command: line })
 }
 
 pub fn merge_commands(base: &serde_json::Value, plugins: serde_json::Value) -> serde_json::Value {
