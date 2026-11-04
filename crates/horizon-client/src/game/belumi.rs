@@ -35,6 +35,12 @@ pub(super) fn zoom_after_wheel(current: f32, steps: f32) -> f32 {
     (current * 1.15_f32.powf(steps)).clamp(ZOOM_MIN, ZOOM_MAX)
 }
 
+impl BelumiState {
+    pub(super) fn zoom_held(&self) -> bool {
+        self.zoom_held
+    }
+}
+
 impl Game<'_> {
     pub(super) fn belumi_frame(&mut self, elapsed: std::time::Duration) {
         let dt = elapsed.as_secs_f32();
@@ -195,6 +201,8 @@ impl Game<'_> {
         let corner = self.settings.belumi.corner();
         let lines = self.belumi_hud_lines();
         self.belumi_draw_lines(batch, corners, corner, &lines);
+        let waypoint_lines = self.belumi_waypoint_lines();
+        self.belumi_draw_lines(batch, corners, corner, &waypoint_lines);
     }
 }
 

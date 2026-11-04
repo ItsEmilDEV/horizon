@@ -78,6 +78,7 @@ impl Game<'_> {
     /// Auto-reconnect: a connection to `address` as `name` starts.
     pub(super) fn extras_connecting(&mut self, address: &str, name: &str) {
         self.extras.reconnect.connecting(address, name);
+        self.belumi_connecting(address);
     }
     /// Auto-reconnect: the server let the player in.
     pub(super) fn extras_joined(&mut self) {
@@ -86,6 +87,7 @@ impl Game<'_> {
     /// Auto-reconnect: the player left the server on purpose.
     pub(super) fn extras_left(&mut self) {
         self.extras.reconnect.reset();
+        self.belumi_left();
     }
     /// Auto-reconnect's next attempt after a disconnect, when it is on and
     /// the reason allows one.

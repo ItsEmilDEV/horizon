@@ -85,15 +85,30 @@ impl Palette {
 }
 
 #[derive(Clone)]
-struct Tile {
+pub struct Tile {
     /// Map colour id per column (`z * 16 + x`), `| WALL` for cut walls.
-    color: [u8; 256],
-    height: [i16; 256],
+    pub color: [u8; 256],
+    pub height: [i16; 256],
     /// Water depth below the surface, for the map's water shading.
-    depth: [u8; 256],
+    pub depth: [u8; 256],
     revision: u64,
     layer: Layer,
     scanned: Instant,
+}
+impl Tile {
+    pub fn surface(&self) -> bool {
+        self.layer == Layer::Surface
+    }
+    pub fn from_columns(color: [u8; 256], height: [i16; 256], depth: [u8; 256]) -> Self {
+        Self {
+            color,
+            height,
+            depth,
+            revision: 0,
+            layer: Layer::Surface,
+            scanned: Instant::now(),
+        }
+    }
 }
 /// `MapItem.update` for one column: the first block with a map colour
 /// going down, the fluid's colour over a fluid unless the block is sturdy on
@@ -200,7 +215,7 @@ impl View {
             || self.blocks_per_pixel != other.blocks_per_pixel
     }
     /// The world's right and forward directions as the map's x and up.
-    fn axes(&self) -> ([f64; 2], [f64; 2]) {
+    pub fn axes(&self) -> ([f64; 2], [f64; 2]) {
         if !self.rotate {
             return ([1.0, 0.0], [0.0, -1.0]);
         }
@@ -265,6 +280,9 @@ pub struct Minimap {
     changed: bool,
     /// The composed image, `SIZE` x `SIZE` RGBA.
     pub image: Vec<u8>,
+    /// Surface tiles scanned since the last `take_scanned`, when `record` is on.
+    pub record: bool,
+    scanned_log: Vec<((i32, i32), Tile)>,
 }
 impl Minimap {
     /// Forget everything (a new world or dimension, or the minimap turned off).
@@ -316,6 +334,9 @@ impl Minimap {
                 }) {
                     self.changed = true;
                 }
+                if self.record && tile.layer == Layer::Surface {
+                    self.scanned_log.push((key, tile.clone()));
+                }
                 self.tiles.insert(key, tile);
                 scanned += 1;
                 if started.elapsed() >= budget {
@@ -335,62 +356,67 @@ impl Minimap {
         }
         self.changed = false;
         self.composed = Some(view);
-        self.image.resize(SIZE * SIZE * 4, 0);
-        let (r, f) = view.axes();
-        let bpp = f64::from(view.blocks_per_pixel);
-        let half = SIZE as f64 / 2.0;
-        let mut cached: Option<((i32, i32), &Tile)> = None;
-        let mut column = |x: i32, z: i32| -> Option<(u8, i16, u8)> {
-            let key = (x >> 4, z >> 4);
-            let tile = match cached {
-                Some((k, t)) if k == key => t,
-                _ => {
-                    let t = self.tiles.get(&key)?;
-                    cached = Some((key, t));
-                    t
-                }
-            };
+        let tiles = &self.tiles;
+        paint(&mut self.image, SIZE, view, |x, z| {
+            let t = tiles.get(&(x >> 4, z >> 4))?;
             let i = ((z & 15) * 16 + (x & 15)) as usize;
-            Some((tile.color[i], tile.height[i], tile.depth[i]))
-        };
-        for j in 0..SIZE {
-            for i in 0..SIZE {
-                let (u, v) = (i as f64 + 0.5 - half, j as f64 + 0.5 - half);
-                let o = (j * SIZE + i) * 4;
-                let edge = if view.round {
-                    let d = (u * u + v * v).sqrt();
-                    if d > half {
-                        self.image[o..o + 4].copy_from_slice(&[0; 4]);
-                        continue;
-                    }
-                    d > half - 1.5
-                } else {
-                    i == 0 || j == 0 || i == SIZE - 1 || j == SIZE - 1
-                };
-                if edge {
-                    self.image[o..o + 4].copy_from_slice(&BORDER);
-                    continue;
-                }
-                let wx = view.x + bpp * (u * r[0] - v * f[0]);
-                let wz = view.z + bpp * (u * r[1] - v * f[1]);
-                let (x, z) = (wx.floor() as i32, wz.floor() as i32);
-                let rgba = match column(x, z) {
-                    Some((color, height, depth)) if color & !WALL != 0 => {
-                        let north = column(x, z - 1).filter(|c| c.0 & !WALL != 0).map(|c| c.1);
-                        let b = brightness(color, height, north, depth, x + z);
-                        packed_rgba(color & !WALL, b)
-                    }
-                    _ => UNKNOWN,
-                };
-                self.image[o..o + 4].copy_from_slice(&rgba);
-            }
-        }
+            Some((t.color[i], t.height[i], t.depth[i]))
+        });
         true
     }
     pub fn tile_count(&self) -> usize {
         self.tiles.len()
     }
+    pub fn take_scanned(&mut self) -> Vec<((i32, i32), Tile)> {
+        std::mem::take(&mut self.scanned_log)
+    }
 }
+/// Paints `size` x `size` RGBA texels of the map seen from `view`;
+/// `column` gives a world column's (colour, height, water depth).
+pub fn paint(
+    image: &mut Vec<u8>,
+    size: usize,
+    view: View,
+    mut column: impl FnMut(i32, i32) -> Option<(u8, i16, u8)>,
+) {
+    image.resize(size * size * 4, 0);
+    let (r, f) = view.axes();
+    let bpp = f64::from(view.blocks_per_pixel);
+    let half = size as f64 / 2.0;
+    for j in 0..size {
+        for i in 0..size {
+            let (u, v) = (i as f64 + 0.5 - half, j as f64 + 0.5 - half);
+            let o = (j * size + i) * 4;
+            let edge = if view.round {
+                let d = (u * u + v * v).sqrt();
+                if d > half {
+                    image[o..o + 4].copy_from_slice(&[0; 4]);
+                    continue;
+                }
+                d > half - 1.5
+            } else {
+                i == 0 || j == 0 || i == size - 1 || j == size - 1
+            };
+            if edge {
+                image[o..o + 4].copy_from_slice(&BORDER);
+                continue;
+            }
+            let wx = view.x + bpp * (u * r[0] - v * f[0]);
+            let wz = view.z + bpp * (u * r[1] - v * f[1]);
+            let (x, z) = (wx.floor() as i32, wz.floor() as i32);
+            let rgba = match column(x, z) {
+                Some((color, height, depth)) if color & !WALL != 0 => {
+                    let north = column(x, z - 1).filter(|c| c.0 & !WALL != 0).map(|c| c.1);
+                    let b = brightness(color, height, north, depth, x + z);
+                    packed_rgba(color & !WALL, b)
+                }
+                _ => UNKNOWN,
+            };
+            image[o..o + 4].copy_from_slice(&rgba);
+        }
+    }
+}
+
 /// Chunk offsets at Chebyshev distance `ring`.
 fn ring_offsets(ring: i32) -> impl Iterator<Item = (i32, i32)> {
     (-ring..=ring).flat_map(move |dz| {

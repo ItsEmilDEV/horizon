@@ -50,6 +50,7 @@ mod beacon;
 mod beds;
 mod beehives;
 mod belumi;
+mod belumi_maps;
 mod block_entity_anims;
 mod block_entity_ticks;
 mod block_items;
@@ -2098,6 +2099,7 @@ struct Game<'a> {
     /// Horizon's extras (minimap, auto-reconnect; mods' counters): `game/extras.rs`.
     extras: extras::ExtrasState,
     belumi: belumi::BelumiState,
+    belumi_maps: belumi_maps::MapState,
     /// Horizon mods (`game/mods.rs`), none running unless turned on.
     mods: mods::ModsState,
     /// Every item and recipe, for mods (`game/native_recipes.rs`), made once.
@@ -15139,6 +15141,7 @@ impl<'a> Game<'a> {
             frame_graph: Default::default(),
             extras: Default::default(),
             belumi: Default::default(),
+            belumi_maps: Default::default(),
             mods: Default::default(),
             recipe_tables: Default::default(),
             panel: Default::default(),

@@ -91,6 +91,8 @@ pub const MAX_ATLAS_SIZE: u32 = 16384;
 pub const MAP_SLOTS: usize = 256;
 /// The atlas slot the minimap extra draws into.
 pub const MINIMAP_SPRITE: &str = "horizon/minimap";
+pub const WORLDMAP_SPRITE: &str = "horizon/worldmap";
+pub const WORLDMAP_SIZE: usize = 256;
 /// Atlas slots for downloaded player skins (`skins/<sha1>`), 64x64 each.
 /// Vanilla registers a texture per skin. Here the slots are shared
 /// (`skins::SkinSlots`): skins drawn in the last frame keep theirs, and a
@@ -319,6 +321,12 @@ impl HudAtlas {
             crate::minimap::SIZE as u32,
             crate::minimap::SIZE as u32,
             vec![0; crate::minimap::SIZE * crate::minimap::SIZE * 4],
+        ));
+        images.push((
+            WORLDMAP_SPRITE.into(),
+            WORLDMAP_SIZE as u32,
+            WORLDMAP_SIZE as u32,
+            vec![0; WORLDMAP_SIZE * WORLDMAP_SIZE * 4],
         ));
         // Downloaded skins (game/scoreboard.rs).
         for i in 0..SKIN_SLOTS {
