@@ -536,6 +536,10 @@ impl<'a> Game<'a> {
             self.spawn_scratch = scratch;
             return;
         }
+        if self.world.game_time % 100 == 0 {
+            let c: Vec<u64> = horizon_client::mobs::spawn_selection::C.iter().map(|a| a.swap(0, std::sync::atomic::Ordering::Relaxed)).collect();
+            log::info!("[belumi] spawn counters/100t cat={} local={} pos={} tries={} dist={} valid={} passed={} spawned={}; cand={} mobs={}", c[0], c[1], c[7], c[2], c[3], c[4], c[5], c[6], scratch.candidates.len(), self.mobs.len());
+        }
         let spawn_mobs = self.ui.rules.bool("spawn_mobs");
         let spawn_enemies = self.ui.rules.bool("spawn_monsters");
         let mut random = std::mem::replace(&mut self.world.random, LegacyRandom::new(0));

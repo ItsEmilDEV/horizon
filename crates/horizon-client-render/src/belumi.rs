@@ -4,6 +4,7 @@ use std::{fs, path::Path};
 
 pub const FILE: &str = "belumi.toml";
 pub const ZOOM_KEY: &str = "belumi.zoom";
+pub const INSPECTOR_KEY: &str = "belumi.inspector";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -20,6 +21,9 @@ pub struct Belumi {
     pub zoom_level: u8,
     pub zoom_smooth: bool,
     pub zoom_scroll: bool,
+    pub inspector: bool,
+    pub inspector_key: String,
+    pub inspector_corner: String,
 }
 impl Default for Belumi {
     fn default() -> Self {
@@ -36,6 +40,9 @@ impl Default for Belumi {
             zoom_level: 2,
             zoom_smooth: true,
             zoom_scroll: true,
+            inspector: false,
+            inspector_key: "key.keyboard.f8".into(),
+            inspector_corner: Corner::BottomLeft.name().into(),
         }
     }
 }
@@ -69,12 +76,19 @@ impl Belumi {
             .find(|c| c.name() == self.hud_corner)
             .unwrap_or(Corner::TopLeft)
     }
+    pub fn inspector_corner(&self) -> Corner {
+        Corner::ALL
+            .into_iter()
+            .find(|c| c.name() == self.inspector_corner)
+            .unwrap_or(Corner::BottomLeft)
+    }
     pub fn zoom_factor(&self) -> f32 {
         ZOOM_LEVELS[usize::from(self.zoom_level).min(ZOOM_LEVELS.len() - 1)]
     }
     pub fn set_key(&mut self, name: &str, value: String) -> bool {
         match name {
             ZOOM_KEY => self.zoom_key = value,
+            INSPECTOR_KEY => self.inspector_key = value,
             _ => return false,
         }
         true
@@ -95,6 +109,9 @@ pub enum Item {
     ZoomLevel,
     ZoomSmooth,
     ZoomScroll,
+    Inspector,
+    InspectorKey,
+    InspectorCorner,
 }
 
 pub fn rows() -> Vec<Result<Item, &'static str>> {
@@ -114,6 +131,10 @@ pub fn rows() -> Vec<Result<Item, &'static str>> {
         Ok(ZoomLevel),
         Ok(ZoomSmooth),
         Ok(ZoomScroll),
+        Err("Debug"),
+        Ok(Inspector),
+        Ok(InspectorKey),
+        Ok(InspectorCorner),
     ]
 }
 
@@ -132,6 +153,9 @@ impl Item {
             Item::ZoomLevel => "Zoom level",
             Item::ZoomSmooth => "Smooth zoom",
             Item::ZoomScroll => "Scroll adjusts zoom",
+            Item::Inspector => "Packet inspector",
+            Item::InspectorKey => "Inspector key",
+            Item::InspectorCorner => "Inspector corner",
         }
     }
     pub fn description(self) -> &'static str {
@@ -148,6 +172,9 @@ impl Item {
             Item::ZoomLevel => "How far the zoom key magnifies.",
             Item::ZoomSmooth => "Eases the field of view in and out.",
             Item::ZoomScroll => "The mouse wheel changes the zoom while the key is held.",
+            Item::Inspector => "A key shows live packet rates, sizes and the latest packets.",
+            Item::InspectorKey => "Click, then press a key; Escape unbinds it.",
+            Item::InspectorCorner => "The screen corner the inspector sits in.",
         }
     }
     pub fn parent(self) -> Option<Item> {
@@ -155,7 +182,8 @@ impl Item {
         match self {
             HudCorner | HudCoords | HudFps | HudPing | HudDirection | HudSpeed => Some(Hud),
             ZoomKey | ZoomLevel | ZoomSmooth | ZoomScroll => Some(Zoom),
-            Hud | Zoom => None,
+            InspectorKey | InspectorCorner => Some(Inspector),
+            Hud | Zoom | Inspector => None,
         }
     }
     pub fn switch(self, b: &Belumi) -> Option<bool> {
@@ -169,12 +197,15 @@ impl Item {
             Item::Zoom => b.zoom,
             Item::ZoomSmooth => b.zoom_smooth,
             Item::ZoomScroll => b.zoom_scroll,
+            Item::Inspector => b.inspector,
             _ => return None,
         })
     }
     pub fn value(self, b: &Belumi) -> String {
         match self {
             Item::HudCorner => b.corner().label().into(),
+            Item::InspectorCorner => b.inspector_corner().label().into(),
+            Item::InspectorKey => crate::keybinds::display_name(&b.inspector_key).plain(),
             Item::ZoomKey => crate::keybinds::display_name(&b.zoom_key).plain(),
             Item::ZoomLevel => format!("{}x", b.zoom_factor()),
             other => match other.switch(b) {
@@ -194,6 +225,7 @@ impl Item {
             Item::Zoom => b.zoom = !b.zoom,
             Item::ZoomSmooth => b.zoom_smooth = !b.zoom_smooth,
             Item::ZoomScroll => b.zoom_scroll = !b.zoom_scroll,
+            Item::Inspector => b.inspector = !b.inspector,
             Item::HudCorner => {
                 let i = Corner::ALL
                     .iter()
@@ -211,12 +243,22 @@ impl Item {
                     (b.zoom_level + 1) % n
                 };
             }
-            Item::ZoomKey => {}
+            Item::InspectorCorner => {
+                let i = Corner::ALL
+                    .iter()
+                    .position(|c| *c == b.inspector_corner())
+                    .unwrap_or(0);
+                let n = Corner::ALL.len();
+                let next = if back { (i + n - 1) % n } else { (i + 1) % n };
+                b.inspector_corner = Corner::ALL[next].name().into();
+            }
+            Item::ZoomKey | Item::InspectorKey => {}
         }
     }
     pub fn key_name(self) -> Option<&'static str> {
         match self {
             Item::ZoomKey => Some(ZOOM_KEY),
+            Item::InspectorKey => Some(INSPECTOR_KEY),
             _ => None,
         }
     }

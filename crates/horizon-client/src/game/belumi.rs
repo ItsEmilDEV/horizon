@@ -1,5 +1,5 @@
 use super::{Game, native_hooks::NativeZoom};
-use horizon_client::{extras_hud::Corners, hud::HudBatch};
+use horizon_client::{extras::Corner, extras_hud::Corners, hud::HudBatch};
 
 const BOX_COLOR: u32 = 0x7800_0000;
 const TEXT_COLOR: u32 = 0x00FF_FFFF;
@@ -10,6 +10,7 @@ const ZOOM_MAX: f32 = 10.0;
 pub(super) struct BelumiState {
     zoom_held: bool,
     zoom_factor: Option<f32>,
+    inspector_open: bool,
     last_position: Option<[f64; 3]>,
     speed: f32,
     speed_clock: f32,
@@ -57,6 +58,10 @@ impl Game<'_> {
 
     pub(super) fn belumi_key(&mut self, key: &str, pressed: bool) {
         let cfg = &self.settings.belumi;
+        if pressed && cfg.inspector && key == cfg.inspector_key && self.native_playing() {
+            self.belumi.inspector_open = !self.belumi.inspector_open;
+            horizon_client::belumi_inspect::set_active(self.belumi.inspector_open);
+        }
         if key != cfg.zoom_key {
             return;
         }
@@ -138,13 +143,34 @@ impl Game<'_> {
         lines
     }
 
-    pub(super) fn belumi_hud(&mut self, batch: &mut HudBatch, corners: &mut Corners) {
-        let corner = self.settings.belumi.corner();
-        if !self.native_corner_shown(corner) {
-            return;
-        }
-        let lines = self.belumi_hud_lines();
-        if lines.is_empty() {
+    fn belumi_inspector_lines(&self) -> Vec<String> {
+        use horizon_client::belumi_inspect::{format_bytes, snapshot};
+        use horizon_protocol::Direction;
+        let s = snapshot();
+        let mut lines = vec![
+            format!(
+                "In {}/s {}   Out {}/s {}",
+                s.in_packets,
+                format_bytes(s.in_bytes),
+                s.out_packets,
+                format_bytes(s.out_bytes)
+            ),
+            format!("Frame {} FPS (low {})", self.native_frame_rate().0, self.native_frame_rate().2),
+        ];
+        lines.extend(
+            s.top
+                .iter()
+                .map(|(n, c, b)| format!("{n} x{c} {}", format_bytes(*b))),
+        );
+        lines.extend(s.recent.iter().rev().take(3).map(|p| {
+            let arrow = if p.direction == Direction::Clientbound { "<-" } else { "->" };
+            format!("{arrow} {} {}", p.name, format_bytes(p.bytes))
+        }));
+        lines
+    }
+
+    fn belumi_draw_lines(&self, batch: &mut HudBatch, corners: &mut Corners, corner: Corner, lines: &[String]) {
+        if lines.is_empty() || !self.native_corner_shown(corner) {
             return;
         }
         let width = lines
@@ -156,14 +182,19 @@ impl Game<'_> {
         let (x, y) = corners.place(corner, width, height);
         self.native_fill(batch, [x, y, width, height], BOX_COLOR);
         for (i, line) in lines.iter().enumerate() {
-            self.native_text(
-                batch,
-                line,
-                [x + 3.0, y + 2.0 + i as f32 * 10.0],
-                TEXT_COLOR,
-                true,
-            );
+            self.native_text(batch, line, [x + 3.0, y + 2.0 + i as f32 * 10.0], TEXT_COLOR, true);
         }
+    }
+
+    pub(super) fn belumi_hud(&mut self, batch: &mut HudBatch, corners: &mut Corners) {
+        if self.belumi.inspector_open && self.settings.belumi.inspector {
+            let corner = self.settings.belumi.inspector_corner();
+            let lines = self.belumi_inspector_lines();
+            self.belumi_draw_lines(batch, corners, corner, &lines);
+        }
+        let corner = self.settings.belumi.corner();
+        let lines = self.belumi_hud_lines();
+        self.belumi_draw_lines(batch, corners, corner, &lines);
     }
 }
 

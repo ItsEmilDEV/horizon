@@ -269,7 +269,9 @@ impl Session {
             return;
         }
         let compat = *self.protocol.lock().unwrap();
-        let body = compat.encode_serverbound(State::Play, &packet.encode());
+        let encoded = packet.encode();
+        crate::belumi_inspect::record_encoded(horizon_protocol::Direction::Serverbound, &encoded);
+        let body = compat.encode_serverbound(State::Play, &encoded);
         if let Some(w) = writer.as_mut()
             && w.send(&body).is_err()
         {
@@ -688,6 +690,7 @@ fn receive_play(
     loop {
         let (id, payload) = reader.recv().map_err(|e| connection_lost(e, lang))?;
         let id = compat.clientbound_id(State::Play, id);
+        crate::belumi_inspect::record(horizon_protocol::Direction::Clientbound, id, payload.len());
         let (id, raw) = compat.clientbound_retarget(State::Play, id, payload);
         let payload = compat.clientbound_payload(State::Play, id, &raw);
         let packet = match play::Clientbound::decode(id, &payload) {

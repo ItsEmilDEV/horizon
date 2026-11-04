@@ -53,6 +53,7 @@ pub mod end_gateway;
 pub mod entities;
 pub mod entity_culling;
 pub mod entity_nbt;
+pub mod belumi_inspect;
 pub mod extras_hud;
 pub mod falling_block;
 pub mod fire_render;
