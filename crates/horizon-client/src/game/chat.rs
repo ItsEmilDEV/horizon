@@ -627,6 +627,9 @@ impl Game<'_> {
     /// A line on the window's own chat when the Chat option lets `source`
     /// through.
     fn local_chat_line(&mut self, text: Text, indicator: Option<u32>, source: ChatSource) {
+        if self.belumi_plugins_active() {
+            self.belumi_plugins_chat(&text.plain());
+        }
         if !self.ui.chat.shows(source) {
             return;
         }

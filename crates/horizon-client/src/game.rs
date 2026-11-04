@@ -52,6 +52,7 @@ mod beehives;
 mod belumi;
 mod belumi_freecam;
 mod belumi_maps;
+mod belumi_plugins;
 mod block_entity_anims;
 mod block_entity_ticks;
 mod block_items;
@@ -2102,6 +2103,7 @@ struct Game<'a> {
     belumi: belumi::BelumiState,
     belumi_maps: belumi_maps::MapState,
     belumi_free: belumi_freecam::FreecamState,
+    belumi_plugins: belumi_plugins::PluginState,
     /// Horizon mods (`game/mods.rs`), none running unless turned on.
     mods: mods::ModsState,
     /// Every item and recipe, for mods (`game/native_recipes.rs`), made once.
@@ -15153,6 +15155,7 @@ impl<'a> Game<'a> {
             belumi: Default::default(),
             belumi_maps: Default::default(),
             belumi_free: Default::default(),
+            belumi_plugins: Default::default(),
             mods: Default::default(),
             recipe_tables: Default::default(),
             panel: Default::default(),

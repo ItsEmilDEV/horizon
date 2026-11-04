@@ -309,13 +309,16 @@ impl Game<'_> {
     /// Once a frame, in a world or not, after Horizon's extras.
     pub(super) fn native_frame(&mut self, elapsed: Duration) {
         self.belumi_frame(elapsed);
+        self.belumi_plugins_frame();
         self.belumi_freecam_frame(elapsed.as_secs_f32());
         self.belumi_explore(elapsed.as_secs_f32());
     }
     /// Once a tick, in every `Game`: the window's (in single player, on LAN
     /// and on servers), and the server's own (`native_window` is false
     /// there: the single player server thread, a dedicated server).
-    pub(super) fn native_tick(&mut self) {}
+    pub(super) fn native_tick(&mut self) {
+        self.belumi_plugins_tick();
+    }
     /// The world's phases, read-only; `error_text` carries the engine's
     /// own open-failure text, empty otherwise. Server-side; the deprecated
     /// in-frame path delivers no lifecycle events. A server loop or final
@@ -353,6 +356,7 @@ impl Game<'_> {
     pub(super) fn native_key(&mut self, key: &str, pressed: bool) {
         self.belumi_key(key, pressed);
         self.belumi_map_key(key, pressed);
+        self.belumi_plugins_key(key, pressed);
     }
     /// Wheel steps while playing: set `claimed` to keep them from the hotbar.
     pub(super) fn native_wheel(&mut self, steps: f32, claimed: &mut bool) {
@@ -363,6 +367,7 @@ impl Game<'_> {
     /// A command typed or clicked in chat, without its slash, before the
     /// server and Horizon's commands see it: set `ran` when the mod ran it.
     pub(super) fn native_command(&mut self, command: &str, ran: &mut bool) {
+        self.belumi_plugins_command(command, ran);
         self.belumi_command(command, ran);
     }
     /// The zoom a native mod asks for, applied while playing (the spyglass's

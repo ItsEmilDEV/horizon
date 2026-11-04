@@ -5,7 +5,7 @@ use std::{
 };
 
 const BUDGET_MS: f32 = 50.0;
-const TOP: usize = 8;
+const TOP: usize = 16;
 
 #[derive(Default)]
 struct SpanStat {

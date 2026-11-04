@@ -20,6 +20,7 @@ horizon-threads = { path = "../horizon-threads" }
 # Optional Belumi server plugin host (feature `belumi`); lives in the Belumi repository, four levels up.
 belumi-server = { path = "../../../../crates/belumi-server", optional = true }
 belumi-plugin-api = { path = "../../../../crates/belumi-plugin-api", optional = true }
+belumi-client-plugins = { path = "../../../../crates/belumi-client-plugins", optional = true }
 horizon-hdr = { path = "../horizon-hdr" }
 horizon-world = { path = "../horizon-world" }
 horizon-protocol = { path = "../horizon-protocol" }
@@ -98,6 +99,8 @@ controllers = ["dep:gilrs", "dep:horizon-dualsense", "horizon-client-input/contr
 rng-trace = ["horizon-core/rng-trace"]
 # Belumi server plugins (WebAssembly host from the Belumi repository). Off by default.
 belumi = ["dep:belumi-server", "dep:belumi-plugin-api"]
+# Belumi client plugins: sandboxed WebAssembly run by the game (docs/client-plugins.md). Off by default.
+belumi-plugins = ["dep:belumi-client-plugins"]
 
 # Its own name, not `probe`: Cargo copies every crate's examples into one target/<profile>/examples.
 [[example]]

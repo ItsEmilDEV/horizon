@@ -7,6 +7,7 @@ pub const ZOOM_KEY: &str = "belumi.zoom";
 pub const INSPECTOR_KEY: &str = "belumi.inspector";
 pub const WAYPOINT_KEY: &str = "belumi.waypoint";
 pub const WORLDMAP_KEY: &str = "belumi.worldmap";
+pub const PLUGINS_DIR: &str = "belumi-plugins";
 pub const FREECAM_KEY: &str = "belumi.freecam";
 pub const FREECAM_SPEEDS: [f32; 4] = [5.0, 12.0, 30.0, 60.0];
 
@@ -44,6 +45,8 @@ pub struct Belumi {
     pub waypoint_labels: bool,
     pub worldmap: bool,
     pub worldmap_key: String,
+    pub plugins: bool,
+    pub plugin_corner: String,
     pub freecam: bool,
     pub freecam_key: String,
     pub freecam_speed: u8,
@@ -78,6 +81,8 @@ impl Default for Belumi {
             waypoint_labels: true,
             worldmap: false,
             worldmap_key: "key.keyboard.m".into(),
+            plugins: false,
+            plugin_corner: Corner::BottomRight.name().into(),
             freecam: false,
             freecam_key: "key.keyboard.f9".into(),
             freecam_speed: 1,
@@ -124,6 +129,9 @@ impl Belumi {
     }
     pub fn minimap_corner(&self) -> Corner {
         corner_of(&self.minimap_corner, Corner::TopRight)
+    }
+    pub fn plugin_corner(&self) -> Corner {
+        corner_of(&self.plugin_corner, Corner::BottomRight)
     }
     pub fn zoom_factor(&self) -> f32 {
         ZOOM_LEVELS[usize::from(self.zoom_level).min(ZOOM_LEVELS.len() - 1)]
@@ -177,6 +185,8 @@ pub enum Item {
     WaypointLabels,
     Worldmap,
     WorldmapKey,
+    Plugins,
+    PluginCorner,
     Freecam,
     FreecamKey,
     FreecamSpeed,
@@ -314,6 +324,8 @@ const SPECS: &[Spec] = &[
     switch!(WaypointLabels, "Map markers", "Marks waypoints on the minimap and the world map.", Some(Item::Waypoints), waypoint_labels),
     switch!(Worldmap, "World map", "Remembers explored terrain and shows it in a full-screen overlay.", None, worldmap),
     key!(WorldmapKey, "World map key", Some(Item::Worldmap), WORLDMAP_KEY, worldmap_key),
+    switch!(Plugins, "Client plugins", "Runs the WebAssembly plugins in belumi-plugins/ (needs a build with plugin support). Type /plugins to list them.", None, plugins),
+    corner!(PluginCorner, "Plugin HUD corner", "The screen corner plugin HUD lines appear in.", Some(Item::Plugins), plugin_corner, Corner::BottomRight),
     switch!(Freecam, "Freecam", "Detaches the camera from your body: fly around while you stay put. The wheel changes the speed.", None, freecam),
     key!(FreecamKey, "Freecam key", Some(Item::Freecam), FREECAM_KEY, freecam_key),
     choice!(FreecamSpeed, "Freecam speed", "How fast the camera flies; sprint triples it.", Some(Item::Freecam), FREECAM_LABELS, freecam_speed),
@@ -329,6 +341,7 @@ pub fn rows() -> Vec<Result<Item, &'static str>> {
         ("Zoom", &[Zoom, ZoomKey, ZoomLevel, ZoomSmooth, ZoomScroll]),
         ("Maps", &[Minimap, MinimapCorner, MinimapSize, MinimapZoom, MinimapRotate, MinimapRound, Worldmap, WorldmapKey]),
         ("Waypoints", &[Waypoints, WaypointKey, WaypointList, WaypointLabels]),
+        ("Plugins", &[Plugins, PluginCorner]),
         ("Camera", &[Freecam, FreecamKey, FreecamSpeed]),
         ("Debug", &[Inspector, InspectorKey, InspectorCorner]),
     ];

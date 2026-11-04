@@ -692,6 +692,7 @@ impl Game<'_> {
                 index.entry(s.id).or_insert(i as u32);
             }
             for i in 0..mobs.len() {
+                let t_setup = horizon_client::spans::start();
                 let mut w = MobWorld {
                     others: &snapshot,
                     others_grid: Some(&grid),
@@ -725,6 +726,7 @@ impl Game<'_> {
                     }
                     conn
                 };
+                horizon_client::spans::stop("ent.setup", t_setup);
                 if !w
                     .world
                     .loaded(m.position.x.floor() as i32, m.position.z.floor() as i32)
@@ -746,7 +748,10 @@ impl Game<'_> {
                 }
                 horizon_client::mobs::apply_mob_pushes(m, &mut pushes);
                 let from = events.len();
+                let t_tick = horizon_client::spans::start();
                 let kept = m.tick(&w, &mut scratch, &mut events);
+                horizon_client::spans::stop("ent.mob_tick", t_tick);
+                let t_post = horizon_client::spans::start();
                 // A killed mob's body is removed: its effects that act on
                 // death run (`LivingEntity.remove` with KILLED).
                 if !kept && !m.alive() && !m.removed && !m.extra.effects.is_empty() {
@@ -795,6 +800,7 @@ impl Game<'_> {
                 snapshot[i].alive &= kept;
                 grid.update(i, snapshot[i].bounds);
                 horizon_client::mobs::apply_brain_events(&mut mobs, &mut events, from);
+                horizon_client::spans::stop("ent.post", t_post);
             }
             let mut flags = keep.into_iter();
             mobs.retain(|_| flags.next().unwrap_or(true));
@@ -822,6 +828,7 @@ impl Game<'_> {
             self.lan_entity_event(id as i32, 60, at);
             self.death_poof(at, width, height);
         }
+        let t_after = horizon_client::spans::start();
         self.sync_riders();
         self.tick_skeleton_traps();
         self.tick_apparition();
@@ -843,6 +850,7 @@ impl Game<'_> {
             let bounds = m.bounds();
             self.effects_on_death(&names, bounds, false, Some(m.id), Some(&mut m.random));
         }
+        horizon_client::spans::stop("ent.after", t_after);
         self.handle_mob_events(events)?;
         self.lan_guest_mob_events(guest_events);
         self.tick_projectiles()?;

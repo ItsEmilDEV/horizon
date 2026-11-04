@@ -207,6 +207,9 @@ impl Game<'_> {
         self.belumi_draw_lines(batch, corners, corner, &lines);
         let waypoint_lines = self.belumi_waypoint_lines();
         self.belumi_draw_lines(batch, corners, corner, &waypoint_lines);
+        let plugin_lines = self.belumi_plugin_lines();
+        let plugin_corner = self.belumi_plugin_corner();
+        self.belumi_draw_lines(batch, corners, plugin_corner, &plugin_lines);
     }
 }
 

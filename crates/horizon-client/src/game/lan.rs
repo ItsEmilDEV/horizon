@@ -1642,7 +1642,7 @@ impl Game<'_> {
             let mut states = std::mem::take(&mut host.states);
             if has_guests {
                 let host_entity = state.as_ref().map(|s| s.entity_id);
-                self.lan_assign_ids();
+                horizon_client::spans::time("lan.assign_ids", || self.lan_assign_ids());
                 let guests: Vec<(u32, i32)> = host
                     .hub
                     .guests
@@ -1650,9 +1650,9 @@ impl Game<'_> {
                     .filter_map(|g| Some((g.vehicle?, g.entity_id)))
                     .collect();
                 self.lan_riding(host_entity, &guests, &mut host.hub.riding);
-                self.lan_entities(host_entity, &host.mob_players, &mut host.hub, &mut states);
-                self.lan_hook_states(host_entity, &host.play, &host.hub, &mut states);
-                self.lan_entity_uuids(&mut states);
+                horizon_client::spans::time("lan.entities", || self.lan_entities(host_entity, &host.mob_players, &mut host.hub, &mut states));
+                horizon_client::spans::time("lan.hook_states", || self.lan_hook_states(host_entity, &host.play, &host.hub, &mut states));
+                horizon_client::spans::time("lan.entity_uuids", || self.lan_entity_uuids(&mut states));
             } else {
                 states.clear();
             }
@@ -1717,13 +1717,13 @@ impl Game<'_> {
                 // (`tick_server`): the network is read once, before the first.
                 let pass = self.level_pass;
                 let mut events = if pass.first {
-                    host.hub.poll(&mut ctx)
+                    horizon_client::spans::time("hub.poll", || host.hub.poll(&mut ctx))
                 } else {
                     Vec::new()
                 };
-                events.extend(host.hub.tick_level(&mut ctx));
+                events.extend(horizon_client::spans::time("hub.tick_level", || host.hub.tick_level(&mut ctx)));
                 if pass.last {
-                    host.hub.end_tick();
+                    horizon_client::spans::time("hub.end_tick", || host.hub.end_tick());
                 }
                 events
             };

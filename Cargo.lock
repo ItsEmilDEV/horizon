@@ -206,6 +206,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72b3254f16251a8381aa12e40e3c4d2f0199f8c6508fbecb9d91f575e0fbb8c6"
 
 [[package]]
+name = "belumi-client-plugin-api"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "toml",
+]
+
+[[package]]
+name = "belumi-client-plugins"
+version = "0.1.0"
+dependencies = [
+ "belumi-client-plugin-api",
+ "log",
+ "serde_json",
+ "thiserror 2.0.21",
+ "wasmtime",
+]
+
+[[package]]
 name = "belumi-plugin-api"
 version = "0.1.0"
 dependencies = [
@@ -1315,6 +1336,7 @@ name = "horizon-client"
 version = "0.1.0"
 dependencies = [
  "ab_glyph",
+ "belumi-client-plugins",
  "belumi-plugin-api",
  "belumi-server",
  "bytemuck",
