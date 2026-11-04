@@ -50,7 +50,6 @@ struct TaaResources {
     uniform: wgpu::Buffer,
 }
 
-/// Belumi's built-in effects, neutral by default (`belumi.toml`, docs/effects.md).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Effects {
     pub contrast: f32,
@@ -58,7 +57,6 @@ pub struct Effects {
     pub vignette: f32,
     pub sharpen: f32,
     pub grain: f32,
-    /// -1 cool .. 1 warm.
     pub warmth: f32,
     pub seconds: f32,
 }
@@ -97,7 +95,6 @@ impl Effects {
     }
 }
 
-/// `world_post.wgsl`'s `Fx`.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct FxUniform {

@@ -136,14 +136,9 @@ fn sample_history(uv: vec2<f32>) -> vec3<f32> {
     return vec4(mix(past, centre.rgb, share), centre.a);
 }
 
-// Belumi's built-in effects (belumi.toml): sharpen, contrast, saturation, warmth, vignette
-// and film grain, folded into the copy or FXAA pass that already writes the screen.
 struct Fx {
-    // x: contrast, y: saturation, z: vignette strength, w: sharpen amount.
     grade: vec4<f32>,
-    // rgb: multiplier (warmth), w: grain strength.
     tint: vec4<f32>,
-    // x: seconds, wrapped.
     time: vec4<f32>,
 };
 @group(1) @binding(0) var<uniform> fx: Fx;

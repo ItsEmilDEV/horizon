@@ -280,7 +280,6 @@ pub struct Minimap {
     changed: bool,
     /// The composed image, `SIZE` x `SIZE` RGBA.
     pub image: Vec<u8>,
-    /// Surface tiles scanned since the last `take_scanned`, when `record` is on.
     pub record: bool,
     scanned_log: Vec<((i32, i32), Tile)>,
 }
@@ -371,8 +370,6 @@ impl Minimap {
         std::mem::take(&mut self.scanned_log)
     }
 }
-/// Paints `size` x `size` RGBA texels of the map seen from `view`;
-/// `column` gives a world column's (colour, height, water depth).
 pub fn paint(
     image: &mut Vec<u8>,
     size: usize,
