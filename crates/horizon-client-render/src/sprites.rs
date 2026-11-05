@@ -264,6 +264,7 @@ impl Sprites {
             .map(AnimationMetadata::from_json)
             .transpose()?;
         let mut decoder = png::Decoder::new(BufReader::new(File::open(path)?));
+        decoder.ignore_checksums(true);
         decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
         let mut reader = decoder.read_info()?;
         let mut bytes = vec![

@@ -30,6 +30,8 @@ enum Source {
     /// `depthtex1`/`depthtex2`: depth without translucent terrain (a copy taken before it).
     Depth1,
     Noise,
+    /// The pack's `customTexture.<name>` number n.
+    Custom(usize),
     /// A 1×1 stand-in for names this slice does not provide yet (custom textures...).
     Dummy,
     /// A 1×1 depth of 1.0 behind a comparison sampler, until shadow maps exist: no shadow.
@@ -71,7 +73,7 @@ impl SamplerKind {
                 Self::Nearest
             }
             Source::Depth | Source::Depth1 | Source::ShadowDepth(_, false) => Self::Nearest,
-            Source::Noise => Self::Repeat,
+            Source::Noise | Source::Custom(_) => Self::Repeat,
             Source::Shadow | Source::ShadowDepth(_, true) => Self::Comparison,
             // Blocks look as the game draws them: nearest texels.
             Source::Atlas => Self::NearestRepeat,
@@ -312,6 +314,7 @@ pub struct PackPost {
     main: u16,
     targets: Option<Targets>,
     noise: wgpu::TextureView,
+    custom_textures: Vec<wgpu::TextureView>,
     dummy: wgpu::TextureView,
     /// The stand-in shadow map and its comparison sampler; cleared on the first frame.
     shadow: (wgpu::TextureView, wgpu::Sampler),
@@ -369,6 +372,15 @@ fn texture_format(f: Format, features: wgpu::Features) -> wgpu::TextureFormat {
     }
 }
 
+thread_local! {
+    /// The names of the pack's `customTexture.*` entries while its passes are built.
+    static CUSTOM_TEXTURES: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+fn custom_index(name: &str) -> Option<usize> {
+    CUSTOM_TEXTURES.with(|c| c.borrow().iter().position(|n| n == name))
+}
+
 /// The texture behind sampler `name` in a program of the shadow buffers (`shadow_space`: buffer
 /// n is shadowcolor n) or of the others, when the shadow pass runs (`shadow_pass`). `shadow` is
 /// `shadowtex1` when the program also declares `watershadow` (6.3).
@@ -405,6 +417,7 @@ fn source(name: &str, shadow_space: bool, shadow_pass: bool, watershadow: bool) 
         // The hand is drawn after the pack, so `depthtex2` (without it) is `depthtex1`.
         "depthtex1" | "depthtex2" => Source::Depth1,
         "noisetex" => Source::Noise,
+        n if custom_index(n).is_some() => Source::Custom(custom_index(n).unwrap_or(0)),
         "texture" | "gtexture" | "tex" => Source::Atlas,
         "lightmap" => Source::Lightmap,
         n => horizon_shaders::buffer_index(n).map_or(Source::Dummy, Source::Color),
@@ -412,7 +425,14 @@ fn source(name: &str, shadow_space: bool, shadow_pass: bool, watershadow: bool) 
 }
 
 /// 256×256 RGB white noise (6.4), from a fixed seed so every run looks the same.
-fn noise(device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu::TextureView {
+fn noise(device: &wgpu::Device, queue: &wgpu::Queue, pack: Option<&[u8]>) -> wgpu::TextureView {
+    // The pack's own noise (Solas shapes its clouds, aurora and fog from it); square images only.
+    if let Some((w, h, rgba)) = pack.and_then(|bytes| crate::hud::decode_bytes(bytes).ok())
+        && w == h
+        && w > 0
+    {
+        return texture(device, queue, "Shader pack noisetex", w, &rgba);
+    }
     let mut state = 0x2545_f491_4f6c_dd1du64;
     let texels: Vec<u8> = (0..256 * 256 * 4)
         .map(|i| {
@@ -432,9 +452,20 @@ fn texture(
     side: u32,
     texels: &[u8],
 ) -> wgpu::TextureView {
+    texture_wh(device, queue, label, side, side, texels)
+}
+
+fn texture_wh(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    label: &str,
+    width: u32,
+    height: u32,
+    texels: &[u8],
+) -> wgpu::TextureView {
     let size = wgpu::Extent3d {
-        width: side,
-        height: side,
+        width,
+        height,
         depth_or_array_layers: 1,
     };
     let tex = device.create_texture(&wgpu::TextureDescriptor {
@@ -452,7 +483,7 @@ fn texture(
         texels,
         wgpu::TexelCopyBufferLayout {
             offset: 0,
-            bytes_per_row: Some(side * 4),
+            bytes_per_row: Some(width * 4),
             rows_per_image: None,
         },
         size,
@@ -987,6 +1018,20 @@ impl PackPost {
         notes.extend(post.config.notes);
         let shadow_config = post.config.shadow.clone();
         let mut custom = post.custom;
+        CUSTOM_TEXTURES.with(|c| {
+            *c.borrow_mut() = post.custom_textures.iter().map(|t| t.0.clone()).collect();
+        });
+        let custom_views: Vec<wgpu::TextureView> = post
+            .custom_textures
+            .iter()
+            .map(|(name, bytes)| {
+                let label = format!("Shader pack {name}");
+                match crate::hud::decode_bytes(bytes) {
+                    Ok((w, h, rgba)) if w > 0 && h > 0 => texture_wh(device, queue, &label, w, h, &rgba),
+                    _ => texture(device, queue, &label, 1, &[255; 4]),
+                }
+            })
+            .collect();
         let custom_names: Vec<String> = custom.uniforms().map(|u| u.0.to_owned()).collect();
         // A first run finds the names neither the frame nor the pack defines.
         custom.eval(0.0, &|n| pack_uniforms::index(n).map(|_| Val::scalar(0.0)));
@@ -1447,7 +1492,8 @@ impl PackPost {
             blit_group: None,
             main: 0,
             targets: None,
-            noise: noise(device, queue),
+            noise: noise(device, queue, post.noise.as_deref()),
+            custom_textures: custom_views,
             dummy: texture(device, queue, "Shader pack stand-in", 1, &white),
             shadow: (
                 device
@@ -1589,6 +1635,7 @@ impl PackPost {
                         _ => &targets.depth,
                     },
                     Source::Noise => &self.noise,
+                    Source::Custom(i) => self.custom_textures.get(i).unwrap_or(&self.dummy),
                     Source::Dummy => &self.dummy,
                     Source::Shadow => &self.shadow.0,
                     Source::Atlas => pass
@@ -1963,7 +2010,8 @@ impl PackPost {
             frame.hand_fov_degrees,
             size[0] as f32 / size[1].max(1) as f32,
             frame.depth_far,
-            frame.bob,
+            // The bob is in `gbufferModelView` (pack_uniforms.rs).
+            glam::Mat4::IDENTITY,
         );
         geometry.prepare(device, queue, frame.hand, projection);
         if geometry.quads > 0 {

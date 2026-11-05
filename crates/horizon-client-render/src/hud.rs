@@ -115,6 +115,7 @@ pub fn decode(path: &Path) -> Result<(u32, u32, Vec<u8>)> {
 /// A PNG in memory as RGBA pixels.
 pub fn decode_bytes(data: &[u8]) -> Result<(u32, u32, Vec<u8>)> {
     let mut decoder = png::Decoder::new(std::io::Cursor::new(data));
+    decoder.ignore_checksums(true);
     decoder.set_transformations(png::Transformations::EXPAND | png::Transformations::STRIP_16);
     let mut reader = decoder.read_info()?;
     let mut bytes = vec![0; reader.output_buffer_size().ok_or("image too large")?];
@@ -2413,5 +2414,18 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn png_with_broken_checksums_still_decodes() {
+        let mut data = Vec::new();
+        let mut enc = png::Encoder::new(&mut data, 1, 1);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut w = enc.write_header().unwrap();
+        w.write_image_data(&[1, 2, 3, 4]).unwrap();
+        w.finish().unwrap();
+        data[29] ^= 0xff;
+        assert_eq!(decode_bytes(&data).unwrap(), (1, 1, vec![1, 2, 3, 4]));
     }
 }

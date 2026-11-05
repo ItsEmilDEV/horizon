@@ -49,18 +49,27 @@ impl Corners {
 /// atlas rect), the player arrow (the map item's decoration sprite) turned
 /// `arrow` degrees clockwise from up, and the rim's N toward `north` when the
 /// map turns.
-pub struct MinimapLook {
+pub struct MinimapLook<'a> {
     pub corner: Corner,
     pub size: f32,
     pub image: Rect,
     pub arrow: f32,
     pub north: Option<(f32, f32)>,
+    pub dots: &'a [Dot],
+}
+/// An entity marker: its offset from the map centre in GUI pixels
+/// (x right, y down) and its 0xAARRGGBB colour.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Dot {
+    pub x: f32,
+    pub y: f32,
+    pub color: u32,
 }
 pub fn draw_minimap(
     batch: &mut HudBatch,
     atlas: &HudAtlas,
     corners: &mut Corners,
-    look: &MinimapLook,
+    look: &MinimapLook<'_>,
 ) {
     let MinimapLook {
         corner,
@@ -68,10 +77,15 @@ pub fn draw_minimap(
         image,
         arrow,
         north,
+        dots,
     } = *look;
     let (x, y) = corners.place(corner, size, size);
     batch.rect_uv(x, y, size, size, image, u32::MAX);
     let (cx, cy) = (x + size / 2.0, y + size / 2.0);
+    for d in dots {
+        batch.fill(atlas, cx + d.x - 2.0, cy + d.y - 2.0, 4.0, 4.0, 0xFF00_0000);
+        batch.fill(atlas, cx + d.x - 1.5, cy + d.y - 1.5, 3.0, 3.0, d.color);
+    }
     if let Some(r) = atlas.sprites.get("map/decorations/player").copied() {
         // MapRenderer's decorations draw the sprite flipped: its arrow
         // points down the texture, so up on screen is half a turn.

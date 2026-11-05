@@ -246,12 +246,14 @@ impl Game<'_> {
             } else {
                 (180.0 + view.yaw, None)
             };
+            let dots = self.map_entity_dots(&view, map_size);
             let look = extras_hud::MinimapLook {
                 corner: map_corner,
                 size: map_size,
                 image,
                 arrow,
                 north,
+                dots: &dots,
             };
             extras_hud::draw_minimap(batch, atlas, &mut corners, &look);
         }

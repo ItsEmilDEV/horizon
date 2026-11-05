@@ -4370,7 +4370,7 @@ impl Game<'_> {
         if self.player.is_none() {
             return Ok(());
         }
-        let playing = self.screen == Screen::Playing;
+        let playing = self.screen == Screen::Playing && !self.belumi_freecam_active();
         let held = |k| playing && self.keys.contains(&k);
         let keys = Keys {
             forward: held(KeyCode::KeyW),
@@ -7762,6 +7762,12 @@ impl Remote {
     }
     /// The entity id of a player in the level, by profile UUID.
     #[cfg_attr(not(feature = "belumi-voice"), allow(dead_code))]
+    pub(super) fn map_entities(&self) -> Vec<(bool, [f64; 3], &str)> {
+        self.entities
+            .iter()
+            .map(|(id, t)| (self.level_players.contains_key(id), t.position, t.kind.as_str()))
+            .collect()
+    }
     pub(super) fn player_positions(&self) -> Vec<(u128, [f64; 3])> {
         self.level_players
             .iter()

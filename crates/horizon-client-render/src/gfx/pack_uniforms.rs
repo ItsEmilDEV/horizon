@@ -160,6 +160,8 @@ pub const NAMES: &[&str] = &[
     "shadowModelViewInverse",
     "shadowProjection",
     "shadowProjectionInverse",
+    "cloudHeight",
+    "heavyFog",
 ];
 
 /// Values carried from frame to frame.
@@ -281,14 +283,15 @@ impl FrameUniforms {
         let dt = self.last.map_or(0.0, |l| (now - l).as_secs_f32());
         self.last = Some(now);
         let aspect = size[0] as f32 / size[1].max(1) as f32;
-        let view = crate::camera::view_matrix(frame.yaw, frame.pitch);
+        // As in Iris and OptiFine, the view bob is part of the model-view matrix the pack reads;
+        // the projection stays a plain perspective (times the nausea spin).
+        let view = frame.bob * crate::camera::view_matrix(frame.yaw, frame.pitch);
         let projection = Mat4::perspective_rh_gl(
             frame.fov_degrees.to_radians(),
             aspect,
             0.05,
             frame.depth_far,
-        ) * frame.bob
-            * frame.spin;
+        ) * frame.spin;
         let camera = frame.camera.as_vec3();
         let (previous_camera, previous_view, previous_projection) =
             self.previous
@@ -353,6 +356,8 @@ impl FrameUniforms {
                 "shadowModelViewInverse" => m4(shadow_view.inverse()),
                 "shadowProjection" => m4(shadow_projection),
                 "shadowProjectionInverse" => m4(shadow_projection.inverse()),
+                "cloudHeight" => Value::f(&[192.0]),
+                "heavyFog" => Value::i(&[0]),
                 "atlasSize" => Value::i(&[self.atlas[0] as i32, self.atlas[1] as i32]),
                 "frameTime" => Value::f(&[dt]),
                 "frameTimeCounter" => Value::f(&[seconds]),

@@ -5,7 +5,7 @@
 //! process's memory: it is never logged, printed or written anywhere.
 use std::{
     path::Path,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex, RwLock},
     time::{Duration, SystemTime},
 };
 
@@ -20,6 +20,16 @@ pub struct AuthSession {
     pub uuid: u128,
     pub xuid: Option<String>,
     access_token: String,
+    renewal: Option<Renewal>,
+    expires_at: Option<u64>,
+}
+
+/// What the launcher hands over so the game can renew the account itself
+/// when the access token runs out: the app's client ID and the refresh token.
+#[derive(Clone)]
+struct Renewal {
+    client_id: String,
+    refresh_token: String,
 }
 impl std::fmt::Debug for AuthSession {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -39,7 +49,22 @@ pub fn parse_uuid(text: &str) -> Option<u128> {
         .flatten()
 }
 
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
 impl AuthSession {
+    /// Whether the game can renew this account by itself.
+    pub fn can_renew(&self) -> bool {
+        self.renewal.is_some()
+    }
+    /// The access token has run out, or does within `margin`.
+    pub fn expires_within(&self, margin: Duration) -> bool {
+        self.expires_at
+            .is_some_and(|at| at <= unix_now() + margin.as_secs())
+    }
     /// For tests and harnesses.
     pub fn new(name: &str, uuid: u128, access_token: &str) -> Self {
         Self {
@@ -47,6 +72,8 @@ impl AuthSession {
             uuid,
             xuid: None,
             access_token: access_token.to_owned(),
+            renewal: None,
+            expires_at: None,
         }
     }
     /// The session file's JSON: {"name", "uuid", "access_token", "user_type": "msa", "xuid"}.
@@ -67,11 +94,20 @@ impl AuthSession {
         if field("user_type").is_some_and(|t| t != "msa") {
             return Err("the session is not a Microsoft account session".into());
         }
+        let renewal = match (field("client_id"), field("refresh_token")) {
+            (Some(id), Some(token)) if !id.is_empty() && !token.is_empty() => Some(Renewal {
+                client_id: id.to_owned(),
+                refresh_token: token.to_owned(),
+            }),
+            _ => None,
+        };
         Ok(Self {
             name: name.to_owned(),
             uuid,
             xuid: field("xuid").map(str::to_owned),
             access_token: access_token.to_owned(),
+            renewal,
+            expires_at: v.get("expires_at").and_then(|e| e.as_u64()),
         })
     }
     /// Read the session file the launcher wrote and delete it at once. It
@@ -103,14 +139,14 @@ impl AuthSession {
     }
 }
 
-static CURRENT: OnceLock<Arc<AuthSession>> = OnceLock::new();
+static CURRENT: RwLock<Option<Arc<AuthSession>>> = RwLock::new(None);
 
-/// The account this game was started with (set once at start).
+/// The account this game was started with; a renewal replaces it.
 pub fn set_current(session: AuthSession) {
-    let _ = CURRENT.set(Arc::new(session));
+    *CURRENT.write().unwrap() = Some(Arc::new(session));
 }
 pub fn current() -> Option<Arc<AuthSession>> {
-    CURRENT.get().cloned()
+    CURRENT.read().unwrap().clone()
 }
 
 /// Why joining a server through the session service failed, like the
@@ -216,20 +252,167 @@ pub fn join_request(session: &AuthSession, server_hash: &str) -> String {
 /// MinecraftServicesSessionService.joinServer: tell the session service this
 /// account is joining the server whose hash is `server_hash`.
 pub fn join_server(session: &AuthSession, server_hash: &str) -> Result<(), JoinError> {
-    let doc = discovery()?;
-    let url = endpoint(&doc, "session", "join").ok_or(JoinError::Unavailable)?;
-    match agent()
-        .post(&url)
-        .set("Content-Type", "application/json; charset=utf-8")
-        .send_string(&join_request(session, server_hash))
-    {
-        Ok(_) => Ok(()),
-        Err(ureq::Error::Status(status, response)) => Err(JoinError::from_response(
-            status,
-            &response.into_string().unwrap_or_default(),
-        )),
-        Err(ureq::Error::Transport(_)) => Err(JoinError::Unavailable),
+    const FALLBACK: &str = "https://sessionserver.mojang.com/session/minecraft/join";
+    let url = discovery()
+        .ok()
+        .and_then(|doc| endpoint(&doc, "session", "join"))
+        .unwrap_or_else(|| FALLBACK.to_owned());
+    let mut last = JoinError::Unavailable;
+    const WAITS_MS: [u64; 6] = [0, 500, 1000, 2000, 3500, 5000];
+    for (attempt, wait) in WAITS_MS.into_iter().enumerate() {
+        if wait > 0 {
+            std::thread::sleep(Duration::from_millis(wait));
+        }
+        let result = agent()
+            .post(&url)
+            .set("Content-Type", "application/json; charset=utf-8")
+            .send_string(&join_request(session, server_hash));
+        match result {
+            Ok(_) => return Ok(()),
+            Err(ureq::Error::Status(status, response)) => {
+                let error = JoinError::from_response(
+                    status,
+                    &response.into_string().unwrap_or_default(),
+                );
+                if status != 429 && error != JoinError::Unavailable {
+                    return Err(error);
+                }
+                log::warn!("session join attempt {} answered {status}", attempt + 1);
+                last = JoinError::Unavailable;
+            }
+            Err(ureq::Error::Transport(e)) => {
+                log::warn!("session join attempt {} failed: {e}", attempt + 1);
+                last = JoinError::Unavailable;
+            }
+        }
     }
+    Err(last)
+}
+
+const MS_TOKEN_URL: &str = "https://login.microsoftonline.com/consumers/oauth2/v2.0/token";
+const XBL_URL: &str = "https://user.auth.xboxlive.com/user/authenticate";
+const XSTS_URL: &str = "https://xsts.auth.xboxlive.com/xsts/authorize";
+const MC_LOGIN_URL: &str = "https://api.minecraftservices.com/authentication/login_with_xbox";
+const MC_PROFILE_URL: &str = "https://api.minecraftservices.com/minecraft/profile";
+
+fn post_json(url: &str, body: serde_json::Value) -> Result<serde_json::Value, String> {
+    agent()
+        .post(url)
+        .set("Content-Type", "application/json")
+        .set("Accept", "application/json")
+        .send_string(&body.to_string())
+        .map_err(|e| match e {
+            ureq::Error::Status(status, _) => format!("answered {status}"),
+            ureq::Error::Transport(t) => t.to_string(),
+        })?
+        .into_string()
+        .map_err(|e| e.to_string())
+        .and_then(|t| serde_json::from_str(&t).map_err(|e| e.to_string()))
+}
+
+/// Renew the signed-in account without the launcher: the refresh token gives
+/// a Microsoft token, that an Xbox and then a Minecraft token (the same steps
+/// as the launcher). On success the new session replaces the current one.
+/// Only one renewal runs at a time; a caller that waited gets its result.
+pub fn renew() -> Result<Arc<AuthSession>, String> {
+    static BUSY: Mutex<()> = Mutex::new(());
+    let before = current().ok_or("not signed in")?;
+    let _guard = BUSY.lock().unwrap();
+    let now = current().ok_or("not signed in")?;
+    if !Arc::ptr_eq(&before, &now) {
+        return Ok(now);
+    }
+    let renewal = now
+        .renewal
+        .clone()
+        .ok_or("the launcher gave no way to renew the sign-in")?;
+    let tokens: serde_json::Value = agent()
+        .post(MS_TOKEN_URL)
+        .send_form(&[
+            ("grant_type", "refresh_token"),
+            ("client_id", &renewal.client_id),
+            ("refresh_token", &renewal.refresh_token),
+            ("scope", "XboxLive.signin offline_access"),
+        ])
+        .map_err(|e| match e {
+            ureq::Error::Status(400 | 401, _) => {
+                "the saved sign-in is no longer valid, sign in again in the launcher".to_owned()
+            }
+            ureq::Error::Status(status, _) => format!("Microsoft answered {status}"),
+            ureq::Error::Transport(t) => t.to_string(),
+        })?
+        .into_string()
+        .map_err(|e| e.to_string())
+        .and_then(|t| serde_json::from_str(&t).map_err(|e| e.to_string()))?;
+    let ms_access = tokens["access_token"]
+        .as_str()
+        .ok_or("Microsoft's reply has no access token")?;
+    let refresh_token = tokens["refresh_token"]
+        .as_str()
+        .unwrap_or(&renewal.refresh_token)
+        .to_owned();
+    let xbl = post_json(
+        XBL_URL,
+        serde_json::json!({
+            "Properties": {
+                "AuthMethod": "RPS",
+                "SiteName": "user.auth.xboxlive.com",
+                "RpsTicket": format!("d={ms_access}"),
+            },
+            "RelyingParty": "http://auth.xboxlive.com",
+            "TokenType": "JWT",
+        }),
+    )
+    .map_err(|e| format!("Xbox Live: {e}"))?;
+    let xbl_token = xbl["Token"].as_str().ok_or("Xbox reply has no token")?;
+    let xsts = post_json(
+        XSTS_URL,
+        serde_json::json!({
+            "Properties": { "SandboxId": "RETAIL", "UserTokens": [xbl_token] },
+            "RelyingParty": "rp://api.minecraftservices.com/",
+            "TokenType": "JWT",
+        }),
+    )
+    .map_err(|e| format!("Xbox Live: {e}"))?;
+    let xsts_token = xsts["Token"].as_str().ok_or("XSTS reply has no token")?;
+    let uhs = xsts["DisplayClaims"]["xui"][0]["uhs"]
+        .as_str()
+        .ok_or("XSTS reply has no user hash")?;
+    let login = post_json(
+        MC_LOGIN_URL,
+        serde_json::json!({ "identityToken": format!("XBL3.0 x={uhs};{xsts_token}") }),
+    )
+    .map_err(|e| format!("Minecraft login: {e}"))?;
+    let access_token = login["access_token"]
+        .as_str()
+        .ok_or("Minecraft's reply has no access token")?
+        .to_owned();
+    let profile: serde_json::Value = agent()
+        .get(MC_PROFILE_URL)
+        .set("Authorization", &format!("Bearer {access_token}"))
+        .call()
+        .map_err(|e| format!("Minecraft profile: {e}"))?
+        .into_string()
+        .map_err(|e| e.to_string())
+        .and_then(|t| serde_json::from_str(&t).map_err(|e| e.to_string()))?;
+    if profile["id"].as_str().and_then(parse_uuid) != Some(now.uuid) {
+        return Err("the renewed sign-in belongs to a different account".into());
+    }
+    let lifetime = login["expires_in"].as_u64().unwrap_or(3600);
+    let renewed = Arc::new(AuthSession {
+        name: now.name.clone(),
+        uuid: now.uuid,
+        xuid: now.xuid.clone(),
+        access_token,
+        renewal: Some(Renewal {
+            client_id: renewal.client_id,
+            refresh_token,
+        }),
+        expires_at: Some(unix_now() + lifetime),
+    });
+    *CURRENT.write().unwrap() = Some(renewed.clone());
+    log::info!("renewed the sign-in of {}", renewed.name);
+    Ok(renewed)
 }
 
 /// What the session service says about a player joining this server
@@ -366,6 +549,29 @@ mod tests {
             assert!(!path.exists());
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_session_can_carry_what_the_game_needs_to_renew_it() {
+        let plain = AuthSession::parse(
+            r#"{"name":"A","uuid":"069a79f444e94726a5befca90e38aaf5","access_token":"t"}"#,
+        )
+        .unwrap();
+        assert!(!plain.can_renew());
+        assert!(!plain.expires_within(Duration::from_secs(300)));
+        let full = AuthSession::parse(
+            r#"{"name":"A","uuid":"069a79f444e94726a5befca90e38aaf5","access_token":"t","client_id":"c","refresh_token":"r","expires_at":1}"#,
+        )
+        .unwrap();
+        assert!(full.can_renew());
+        assert!(full.expires_within(Duration::from_secs(300)));
+        let later = unix_now() + 7200;
+        let fresh = AuthSession::parse(&format!(
+            r#"{{"name":"A","uuid":"069a79f444e94726a5befca90e38aaf5","access_token":"t","expires_at":{later}}}"#
+        ))
+        .unwrap();
+        assert!(!fresh.expires_within(Duration::from_secs(300)));
+        assert!(fresh.expires_within(Duration::from_secs(8000)));
     }
 
     #[test]

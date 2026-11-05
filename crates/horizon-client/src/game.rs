@@ -52,6 +52,7 @@ mod beehives;
 mod belumi;
 mod belumi_freecam;
 mod belumi_maps;
+mod map_entities;
 mod belumi_plugins;
 mod belumi_voice;
 mod block_entity_anims;
@@ -422,6 +423,7 @@ impl Options {
         else {
             return Ok(None);
         };
+        belumi_voice::register_devices();
         // The launcher's account: online-mode servers need it. A bad file
         // only leaves the game offline.
         let session = if o.session_stdin {
@@ -5850,7 +5852,7 @@ impl Game<'_> {
         let camera_eye = self.camera_eye_height();
         let stick = self.pad_move();
         if self.riding.is_some() && self.player.is_some() {
-            let playing = self.screen == Screen::Playing;
+            let playing = self.screen == Screen::Playing && !self.belumi_freecam_active();
             let held = |k| playing && self.keys.contains(&k);
             let keys = Keys {
                 forward: held(KeyCode::KeyW),

@@ -65,6 +65,47 @@ pub fn switches_on(pack: &Pack) -> BTreeSet<String> {
     on
 }
 
+/// The pack's options as macros, for the files that are not programs (`shaders.properties` tests
+/// `#ifdef MILKY_WAY`): the switches that are on, the value options (`#define NAME 3 //[1 2 3]`)
+/// and then the player's choices from `<pack>.txt`.
+pub fn option_macros(pack: &Pack) -> std::collections::BTreeMap<String, String> {
+    let mut macros: std::collections::BTreeMap<String, String> = switches_on(pack)
+        .into_iter()
+        .map(|name| (name, String::new()))
+        .collect();
+    let source = |path: &str| SOURCES.contains(&path.rsplit_once('.').map_or("", |(_, e)| e));
+    for path in pack.all_files().iter().filter(|p| source(p)) {
+        let Some(text) = pack.read_text(path) else { continue };
+        for line in text.lines() {
+            let Some(rest) = line.trim().strip_prefix("#define") else { continue };
+            let Some((code, comment)) = rest.split_once("//") else { continue };
+            if !comment.trim_start().starts_with('[') {
+                continue;
+            }
+            let mut words = code.split_whitespace();
+            if let (Some(name), Some(value)) = (words.next(), words.next())
+                && words.next().is_none()
+            {
+                macros.insert(name.to_owned(), value.to_owned());
+            }
+        }
+    }
+    for (name, value) in &pack.user_options {
+        match value.as_str() {
+            "false" => {
+                macros.remove(name);
+            }
+            "true" => {
+                macros.insert(name.clone(), String::new());
+            }
+            other => {
+                macros.insert(name.clone(), other.to_owned());
+            }
+        }
+    }
+    macros
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

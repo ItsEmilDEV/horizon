@@ -587,7 +587,25 @@ fn run(
                 if hello.should_authenticate {
                     let account = auth.ok_or_else(|| NOT_SIGNED_IN.to_owned())?;
                     let hash = server_hash(&hello.server_id, &secret, &hello.public_key);
-                    if let Err(err) = crate::auth::join_server(account, &hash) {
+                    let mut renewed = None;
+                    if account.can_renew()
+                        && account.expires_within(std::time::Duration::from_secs(300))
+                    {
+                        status(send, &tr(lang, "connect.authorizing"));
+                        renewed = crate::auth::renew().ok();
+                    }
+                    let mut result = crate::auth::join_server(
+                        renewed.as_deref().unwrap_or(account),
+                        &hash,
+                    );
+                    if matches!(result, Err(crate::auth::JoinError::InvalidSession))
+                        && account.can_renew()
+                    {
+                        if let Ok(session) = crate::auth::renew() {
+                            result = crate::auth::join_server(&session, &hash);
+                        }
+                    }
+                    if let Err(err) = result {
                         let reason = match err.reason() {
                             Ok(key) => tr(lang, key),
                             Err(message) => message.to_owned(),
@@ -692,18 +710,12 @@ fn receive_play(
         let id = compat.clientbound_id(State::Play, id);
         crate::belumi_inspect::record(horizon_protocol::Direction::Clientbound, id, payload.len());
         let (id, raw) = compat.clientbound_retarget(State::Play, id, payload);
+        let raw = normalize_byte_light(id, raw);
         let payload = compat.clientbound_payload(State::Play, id, &raw);
         let packet = match play::Clientbound::decode(id, &payload) {
             Ok(p) => p,
             Err(err) => {
-                if let Some(dir) = std::env::var_os("BELUMI_DUMP_BAD_PACKETS") {
-                    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-                    let n = N.fetch_add(1, Ordering::Relaxed);
-                    let _ = std::fs::write(
-                        Path::new(&dir).join(format!("bad-play-{id}-{n}.bin")),
-                        &*raw,
-                    );
-                }
+                dump_bad_packet("play", id, &raw);
                 let name = horizon_protocol::ids::name(
                     horizon_protocol::State::Play,
                     horizon_protocol::Direction::Clientbound,
@@ -1537,5 +1549,150 @@ mod tests {
         payload.data = vec![0xff];
         receive_brand(&payload, &send);
         assert!(events.try_recv().is_err());
+    }
+}
+
+fn dump_bad_packet(state: &str, id: i32, raw: &[u8]) {
+    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let dir = match std::env::var_os("BELUMI_DUMP_BAD_PACKETS") {
+        Some(dir) => PathBuf::from(dir),
+        None => {
+            let base = std::env::var_os("XDG_DATA_HOME")
+                .map(PathBuf::from)
+                .or_else(|| std::env::var_os("HOME").map(|h| Path::new(&h).join(".local/share")));
+            match base {
+                Some(b) => b.join("belumi/logs/bad-packets"),
+                None => return,
+            }
+        }
+    };
+    let n = N.fetch_add(1, Ordering::Relaxed);
+    if n >= 12 {
+        return;
+    }
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::write(dir.join(format!("bad-{state}-{id}-{n}.bin")), raw);
+}
+
+
+/// Some Via proxies write a chunk packet's four light masks as byte arrays
+/// (VarInt length, little-endian bytes) instead of long arrays. Rewrite such a
+/// packet into the long form the decoder expects; any other packet is returned
+/// untouched.
+fn normalize_byte_light(id: i32, raw: Vec<u8>) -> Vec<u8> {
+    byte_light_to_longs(id, &raw).unwrap_or(raw)
+}
+
+fn byte_light_to_longs(id: i32, payload: &[u8]) -> Option<Vec<u8>> {
+    use horizon_protocol::{
+        buf::{Codec, Reader, Writer},
+        chunk::ChunkData,
+    };
+    use horizon_protocol::ids::play::clientbound as ids;
+    if id == ids::LIGHT_UPDATE {
+        return byte_light_update_to_longs(payload);
+    }
+    if id != ids::LEVEL_CHUNK_WITH_LIGHT {
+        return None;
+    }
+    let mut r = Reader::new(payload);
+    if <play::LevelChunkWithLight as Codec<play::LevelChunkWithLight>>::read(&mut r).is_ok()
+        && r.remaining() == 0
+    {
+        return None;
+    }
+    let mut r = Reader::new(payload);
+    let x = r.i32().ok()?;
+    let z = r.i32().ok()?;
+    let chunk = <ChunkData as Codec<ChunkData>>::read(&mut r).ok()?;
+    let light = byte_light(&mut r)?;
+    let packet = play::LevelChunkWithLight { x, z, chunk, light };
+    let mut w = Writer::new();
+    <play::LevelChunkWithLight as Codec<play::LevelChunkWithLight>>::write(&packet, &mut w);
+    Some(w.data)
+}
+
+fn byte_light(r: &mut horizon_protocol::buf::Reader) -> Option<horizon_protocol::chunk::LightData> {
+    use horizon_protocol::buf::Codec;
+    let mask = |r: &mut horizon_protocol::buf::Reader| -> Option<Vec<u8>> {
+        let n = r.count(r.remaining()).ok()?;
+        let bytes = r.bytes(n).ok()?.to_vec();
+        let len = bytes.iter().rposition(|&b| b != 0).map_or(0, |i| i + 1);
+        Some(bytes[..len].to_vec())
+    };
+    let sky_mask = mask(r)?;
+    let block_mask = mask(r)?;
+    let empty_sky_mask = mask(r)?;
+    let empty_block_mask = mask(r)?;
+    let sky = <horizon_protocol::chunk::Layers as Codec<Vec<Vec<u8>>>>::read(r).ok()?;
+    let block = <horizon_protocol::chunk::Layers as Codec<Vec<Vec<u8>>>>::read(r).ok()?;
+    if r.remaining() != 0 {
+        return None;
+    }
+    Some(horizon_protocol::chunk::LightData {
+        sky_mask,
+        block_mask,
+        empty_sky_mask,
+        empty_block_mask,
+        sky,
+        block,
+    })
+}
+
+fn byte_light_update_to_longs(payload: &[u8]) -> Option<Vec<u8>> {
+    use horizon_protocol::buf::{Codec, Reader, Writer};
+    let mut r = Reader::new(payload);
+    if <play::LightUpdate as Codec<play::LightUpdate>>::read(&mut r).is_ok() && r.remaining() == 0 {
+        return None;
+    }
+    let mut r = Reader::new(payload);
+    let x = r.varint().ok()?;
+    let z = r.varint().ok()?;
+    let light = byte_light(&mut r)?;
+    let mut w = Writer::new();
+    <play::LightUpdate as Codec<play::LightUpdate>>::write(&play::LightUpdate { x, z, light }, &mut w);
+    Some(w.data)
+}
+
+#[cfg(test)]
+mod byte_light_tests {
+    use super::*;
+    #[test]
+    fn dumped_hugosmp_chunks_decode_after_normalizing_their_light_masks() {
+        let Some(dir) = std::env::var_os("BELUMI_TEST_CHUNK_DUMPS") else {
+            return;
+        };
+        let mut n = 0;
+        for f in std::fs::read_dir(dir).unwrap().flatten() {
+            let raw = std::fs::read(f.path()).unwrap();
+            let fixed = byte_light_to_longs(46, &raw).unwrap_or_else(|| panic!("{:?}", f.path()));
+            play::Clientbound::decode(46, &fixed).unwrap();
+            n += 1;
+        }
+        assert!(n > 0);
+    }
+
+    #[test]
+    fn a_light_update_with_byte_masks_becomes_the_long_form() {
+        let mut body = vec![3, 4];
+        for mask in [&[0b101u8][..], &[], &[], &[]] {
+            body.push(mask.len() as u8);
+            body.extend_from_slice(mask);
+        }
+        body.push(2);
+        for _ in 0..2 {
+            body.extend_from_slice(&[0x80, 0x10]);
+            body.extend(std::iter::repeat_n(7u8, 2048));
+        }
+        body.push(0);
+        let fixed = byte_light_to_longs(49, &body).unwrap();
+        match play::Clientbound::decode(49, &fixed).unwrap() {
+            play::Clientbound::LightUpdate(u) => {
+                assert_eq!((u.x, u.z), (3, 4));
+                assert_eq!(u.light.sky_mask, vec![0b101]);
+                assert_eq!(u.light.sky.len(), 2);
+            }
+            _ => panic!("not a light update"),
+        }
     }
 }

@@ -265,6 +265,10 @@ pub struct Post {
     pub particles_late: bool,
     /// The custom uniforms of `shaders.properties` (3.4).
     pub custom: Custom,
+    /// The pack's own `noisetex` (`texture.noise` in `shaders.properties`), as PNG bytes.
+    pub noise: Option<Vec<u8>>,
+    /// `customTexture.<sampler>=<path>`: the sampler's name and its PNG bytes.
+    pub custom_textures: Vec<(String, Vec<u8>)>,
     pub config: Config,
     /// Programs skipped and why, as `program: message` or `file:line: message`.
     pub notes: Vec<String>,
@@ -334,6 +338,19 @@ pub fn load_post(
         translucent_late: false,
         particles_late: false,
         custom: Custom::parse(properties),
+        noise: properties
+            .get("texture.noise")
+            .map(|path| path.trim().trim_start_matches('/'))
+            .and_then(|path| pack.read(path)),
+        custom_textures: properties
+            .entries
+            .iter()
+            .filter_map(|e| {
+                let name = e.key.strip_prefix("customTexture.")?;
+                let bytes = pack.read(e.value.trim().trim_start_matches('/'))?;
+                Some((name.to_owned(), bytes))
+            })
+            .collect(),
         config: Config::default(),
         notes: Vec::new(),
     };

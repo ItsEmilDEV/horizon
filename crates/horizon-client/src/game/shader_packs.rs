@@ -36,6 +36,7 @@ impl Game<'_> {
     /// Loads the pack for the current dimension when it changed, and returns this frame's
     /// inputs to the pack's uniforms.
     pub(super) fn shader_pack_inputs(&mut self, camera: glam::DVec3, partial: f32) -> PackInputs {
+        self.pick_default_shader_pack();
         static DEV_PACK: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
         let dev = DEV_PACK.get_or_init(|| std::env::var("HORIZON_SHADER_PACK").ok());
         let picked = dev.as_deref().unwrap_or(&self.settings.horizon.shader_pack);
@@ -71,8 +72,13 @@ impl Game<'_> {
                 match Pack::open(&path) {
                     Ok(pack) => {
                         let macros = Macros::standard();
+                        // The files that are not programs test the pack's options.
+                        let mut option_macros = Macros::standard();
+                        for (option, value) in horizon_shaders::option_macros(&pack) {
+                            option_macros.define(option, value);
+                        }
                         let text = pack.read_text("shaders.properties").unwrap_or_default();
-                        let properties = Properties::parse(&text, &macros);
+                        let properties = Properties::parse(&text, &option_macros);
                         for note in &properties.notes {
                             log::warn!(
                                 "shader pack {name}: shaders.properties:{}: {}",
@@ -88,13 +94,13 @@ impl Game<'_> {
                             biomes.list.iter().map(|b| b.name.as_str()).collect();
                         post.custom.set_biomes(&names);
                         let text = pack.read_text("block.properties").unwrap_or_default();
-                        let ids = BlockIds::parse(&Properties::parse(&text, &macros));
+                        let ids = BlockIds::parse(&Properties::parse(&text, &option_macros));
                         for note in &ids.notes {
                             log::warn!("shader pack {name}: block.properties: {note}");
                         }
                         let text = pack.read_text("entity.properties");
                         let entities = BlockIds::parse_kind(
-                            &Properties::parse(text.as_deref().unwrap_or_default(), &macros),
+                            &Properties::parse(text.as_deref().unwrap_or_default(), &option_macros),
                             "entity",
                         );
                         let text = pack.read_text("item.properties");
@@ -404,4 +410,28 @@ fn block_id_table(pack: &super::PackResources, ids: &BlockIds) -> Vec<i32> {
         }
     }
     table
+}
+
+impl Game<'_> {
+    /// Belumi ships Solas as its look: the first time a game folder has a Solas pack and no pick,
+    /// Solas is picked. A marker file keeps a later "none" from being undone.
+    fn pick_default_shader_pack(&mut self) {
+        static TRIED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if TRIED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+            return;
+        }
+        let dir = Self::shader_packs_dir();
+        let marker = dir.join(".default-pack-applied");
+        if !self.settings.horizon.shader_pack.is_empty() || marker.exists() {
+            return;
+        }
+        let solas = horizon_client::shader_pack_list::scan(&dir)
+            .into_iter()
+            .find(|e| e.file.to_lowercase().starts_with("solas"));
+        if let Some(entry) = solas {
+            self.settings.horizon.shader_pack = entry.file;
+            self.settings.save(&Self::options_path());
+            let _ = std::fs::write(&marker, "");
+        }
+    }
 }

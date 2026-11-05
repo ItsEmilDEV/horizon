@@ -41,12 +41,13 @@ pub fn allowed(reason: &str, from_server: bool) -> bool {
     // The server going away for a while: vanilla's shutdown and time-out
     // reasons, a full server, a slow login, the server's own session
     // servers being down, and restart messages.
-    const RETRY: [&str; 6] = [
+    const RETRY: [&str; 7] = [
         "server closed",
         "timed out",
         "the server is full",
         "took too long to log in",
         "authentication servers",
+        "throttled",
         "restart",
     ];
     RETRY.iter().any(|w| r.contains(w))
@@ -159,6 +160,7 @@ mod tests {
             !allowed("Go away", true),
             "unknown server reasons are not retried"
         );
+        assert!(allowed("Connection throttled! Please wait before reconnecting.", true));
         assert!(!allowed(
             "This server is in online mode. Horizon only joins offline-mode servers.",
             true

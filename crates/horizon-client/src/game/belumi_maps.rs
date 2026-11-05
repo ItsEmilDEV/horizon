@@ -436,6 +436,21 @@ impl Game<'_> {
                 u32::MAX,
             );
         }
+        if self.settings.belumi.map_entities
+            && let Some(remote) = self.remote.as_ref()
+        {
+            for (is_player, pos, kind) in remote.map_entities() {
+                let Some(color) = super::map_entities::color_of(kind, is_player) else {
+                    continue;
+                };
+                let (sx, sy) = to_screen(pos[0], pos[2]);
+                if sx < x + 2.0 || sy < y + 2.0 || sx > x + side - 2.0 || sy > y + side - 2.0 {
+                    continue;
+                }
+                batch.fill(&self.gui.atlas, sx - 2.5, sy - 2.5, 5.0, 5.0, 0xFF00_0000);
+                batch.fill(&self.gui.atlas, sx - 2.0, sy - 2.0, 4.0, 4.0, color);
+            }
+        }
         if self.settings.belumi.waypoints && self.settings.belumi.waypoint_labels {
             for w in self.belumi_visible_waypoints() {
                 let (sx, sy) = to_screen(f64::from(w.x) + 0.5, f64::from(w.z) + 0.5);

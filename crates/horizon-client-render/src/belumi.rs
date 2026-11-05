@@ -54,6 +54,7 @@ pub struct Belumi {
     pub waypoint_key: String,
     pub waypoint_list: bool,
     pub waypoint_labels: bool,
+    pub map_entities: bool,
     pub worldmap: bool,
     pub worldmap_key: String,
     pub effects: bool,
@@ -70,6 +71,7 @@ pub struct Belumi {
     pub voice_threshold: u8,
     pub voice_mic: u8,
     pub voice_volume: u8,
+    pub voice_device: String,
     pub plugins: bool,
     pub plugin_corner: String,
     pub freecam: bool,
@@ -104,6 +106,7 @@ impl Default for Belumi {
             waypoint_key: "key.keyboard.b".into(),
             waypoint_list: true,
             waypoint_labels: true,
+            map_entities: true,
             worldmap: false,
             worldmap_key: "key.keyboard.m".into(),
             effects: false,
@@ -120,6 +123,7 @@ impl Default for Belumi {
             voice_threshold: 1,
             voice_mic: 1,
             voice_volume: 1,
+            voice_device: String::new(),
             plugins: false,
             plugin_corner: Corner::BottomRight.name().into(),
             freecam: false,
@@ -252,6 +256,7 @@ pub enum Item {
     WaypointKey,
     WaypointList,
     WaypointLabels,
+    MapEntities,
     Worldmap,
     WorldmapKey,
     Effects,
@@ -268,6 +273,7 @@ pub enum Item {
     VoiceThreshold,
     VoiceMic,
     VoiceVolume,
+    VoiceDevice,
     Plugins,
     PluginCorner,
     Freecam,
@@ -285,6 +291,10 @@ enum Kind {
     },
     Key {
         name: &'static str,
+        get: fn(&Belumi) -> &str,
+        set: fn(&mut Belumi, String),
+    },
+    Device {
         get: fn(&Belumi) -> &str,
         set: fn(&mut Belumi, String),
     },
@@ -391,6 +401,17 @@ macro_rules! choice {
     };
 }
 
+static INPUT_DEVICES: std::sync::OnceLock<fn() -> Vec<String>> = std::sync::OnceLock::new();
+
+/// Where the list of microphones comes from (set once by the game when it has voice chat).
+pub fn set_input_device_lister(lister: fn() -> Vec<String>) {
+    let _ = INPUT_DEVICES.set(lister);
+}
+
+fn input_devices() -> Vec<String> {
+    INPUT_DEVICES.get().map_or_else(Vec::new, |f| f())
+}
+
 const SPECS: &[Spec] = &[
     switch!(Hud, "HUD", "Shows a small overlay with the lines below.", None, hud),
     corner!(HudCorner, "HUD corner", "The screen corner the overlay sits in.", Some(Item::Hud), hud_corner, Corner::TopLeft),
@@ -414,6 +435,7 @@ const SPECS: &[Spec] = &[
     key!(WaypointKey, "Waypoint key", Some(Item::Waypoints), WAYPOINT_KEY, waypoint_key),
     switch!(WaypointList, "Nearest list", "Lists the nearest waypoints with distance and direction.", Some(Item::Waypoints), waypoint_list),
     switch!(WaypointLabels, "Map markers", "Marks waypoints on the minimap and the world map.", Some(Item::Waypoints), waypoint_labels),
+    switch!(MapEntities, "Entities on maps", "Shows players, hostile mobs and animals as coloured dots on the minimap and the world map.", Some(Item::Minimap), map_entities),
     switch!(Worldmap, "World map", "Remembers explored terrain and shows it in a full-screen overlay.", None, worldmap),
     key!(WorldmapKey, "World map key", Some(Item::Worldmap), WORLDMAP_KEY, worldmap_key),
     switch!(Effects, "Screen effects", "Colour grading, sharpening, vignette and film grain, applied in the pass that already draws the screen (about 0.1 ms).", None, effects),
@@ -430,6 +452,16 @@ const SPECS: &[Spec] = &[
     choice!(VoiceThreshold, "Activation level", "How loud you must be to open the microphone in voice activation mode.", Some(Item::Voice), VOICE_THRESHOLD_LABELS, voice_threshold),
     choice!(VoiceMic, "Microphone volume", "Boosts or lowers what you send.", Some(Item::Voice), VOICE_GAIN_LABELS, voice_mic),
     choice!(VoiceVolume, "Voice volume", "How loud other players sound.", Some(Item::Voice), VOICE_GAIN_LABELS, voice_volume),
+    Spec {
+        item: Item::VoiceDevice,
+        caption: "Microphone",
+        description: "Click to switch to the next microphone; the system default follows your desktop's choice.",
+        parent: Some(Item::Voice),
+        kind: Kind::Device {
+            get: |b| &b.voice_device,
+            set: |b, v| b.voice_device = v,
+        },
+    },
     switch!(Plugins, "Client plugins", "Runs the WebAssembly plugins in belumi-plugins/ (needs a build with plugin support). Type /plugins to list them.", None, plugins),
     corner!(PluginCorner, "Plugin HUD corner", "The screen corner plugin HUD lines appear in.", Some(Item::Plugins), plugin_corner, Corner::BottomRight),
     switch!(Freecam, "Freecam", "Detaches the camera from your body: fly around while you stay put. The wheel changes the speed.", None, freecam),
@@ -445,10 +477,10 @@ pub fn rows() -> Vec<Result<Item, &'static str>> {
     let sections: &[(&'static str, &[Item])] = &[
         ("Heads-up display", &[Hud, HudCorner, HudCoords, HudFps, HudPing, HudDirection, HudSpeed]),
         ("Zoom", &[Zoom, ZoomKey, ZoomLevel, ZoomSmooth, ZoomScroll]),
-        ("Maps", &[Minimap, MinimapCorner, MinimapSize, MinimapZoom, MinimapRotate, MinimapRound, Worldmap, WorldmapKey]),
+        ("Maps", &[Minimap, MinimapCorner, MinimapSize, MinimapZoom, MinimapRotate, MinimapRound, MapEntities, Worldmap, WorldmapKey]),
         ("Waypoints", &[Waypoints, WaypointKey, WaypointList, WaypointLabels]),
         ("Screen effects", &[Effects, FxVignette, FxSaturation, FxContrast, FxWarmth, FxSharpen, FxGrain]),
-        ("Voice chat", &[Voice, VoiceMode, VoiceKey, VoiceMuteKey, VoiceThreshold, VoiceMic, VoiceVolume]),
+        ("Voice chat", &[Voice, VoiceMode, VoiceKey, VoiceMuteKey, VoiceThreshold, VoiceMic, VoiceVolume, VoiceDevice]),
         ("Plugins", &[Plugins, PluginCorner]),
         ("Camera", &[Freecam, FreecamKey, FreecamSpeed]),
         ("Debug", &[Inspector, InspectorKey, InspectorCorner]),
@@ -488,6 +520,16 @@ impl Item {
             Kind::Switch { get, .. } => if get(b) { "On" } else { "Off" }.into(),
             Kind::Key { get, .. } => crate::keybinds::display_name(get(b)).plain(),
             Kind::Choice { labels, get, .. } => labels[get(b).min(labels.len() - 1)].into(),
+            Kind::Device { get, .. } => {
+                let name = get(b);
+                if name.is_empty() {
+                    "System default".into()
+                } else if name.chars().count() > 28 {
+                    format!("{}...", name.chars().take(26).collect::<String>())
+                } else {
+                    name.into()
+                }
+            }
         }
     }
     pub fn cycle(self, b: &mut Belumi, back: bool) {
@@ -499,6 +541,13 @@ impl Item {
                 set(b, if back { (i + n - 1) % n } else { (i + 1) % n });
             }
             Kind::Key { .. } => {}
+            Kind::Device { get, set } => {
+                let mut options = vec![String::new()];
+                options.extend(input_devices());
+                let n = options.len();
+                let at = options.iter().position(|o| o == get(b)).unwrap_or(0);
+                set(b, options[if back { (at + n - 1) % n } else { (at + 1) % n }].clone());
+            }
         }
     }
     pub fn key_name(self) -> Option<&'static str> {
@@ -509,6 +558,25 @@ impl Item {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_microphone_item_steps_through_the_default_and_the_listed_devices() {
+        fn two() -> Vec<String> {
+            vec!["Headset".into(), "Webcam".into()]
+        }
+        set_input_device_lister(two);
+        let mut b = Belumi::default();
+        assert_eq!(Item::VoiceDevice.value(&b), "System default");
+        Item::VoiceDevice.cycle(&mut b, false);
+        assert_eq!(b.voice_device, "Headset");
+        Item::VoiceDevice.cycle(&mut b, false);
+        assert_eq!(b.voice_device, "Webcam");
+        Item::VoiceDevice.cycle(&mut b, false);
+        assert_eq!(b.voice_device, "");
+        Item::VoiceDevice.cycle(&mut b, true);
+        assert_eq!(b.voice_device, "Webcam");
+        assert_eq!(Belumi::parse(&b.serialize()).voice_device, "Webcam");
+    }
 
     #[test]
     fn defaults_round_trip_through_toml() {

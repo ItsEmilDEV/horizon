@@ -55,6 +55,11 @@ impl Preprocessed {
     }
 }
 
+/// Feature switches a pack turns on by itself (Solas: `VX_SUPPORT`, the 3D voxel volume and
+/// floodfill lighting) whose resources the renderer does not provide yet. Leaving the switch
+/// undefined makes the pack take its own fallback path instead of losing whole programs.
+const UNSUPPORTED_PACK_FEATURES: &[&str] = &["VX_SUPPORT"];
+
 /// Runs the preprocessor on the stage file `path` of `pack` with `macros` defined.
 pub fn preprocess(pack: &Pack, path: &str, macros: &Macros) -> Preprocessed {
     let mut run = Run {
@@ -155,7 +160,16 @@ impl Run<'_> {
             Ok(false) => {}
         }
         match word {
-            "define" => self.define(rest, origin),
+            "define" if UNSUPPORTED_PACK_FEATURES.contains(&rest.split_whitespace().next().unwrap_or("")) => {}
+            "define" => {
+                let name = rest.split_whitespace().next().unwrap_or("");
+                match self.pack.user_options.get(name).map(String::as_str) {
+                    Some("false") => {}
+                    Some("true") => self.define(name, origin),
+                    Some(value) => self.define(&format!("{name} {value}"), origin),
+                    None => self.define(rest, origin),
+                }
+            }
             "undef" => self.macros.undef(rest),
             "include" => {
                 let target = rest.trim_matches(|c| c == '"' || c == '<' || c == '>');

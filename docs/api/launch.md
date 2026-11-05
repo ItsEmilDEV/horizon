@@ -45,6 +45,10 @@ The account the game joins online-mode servers with ([microsoft-account.md](../m
 
 - `name`, `uuid` (with or without dashes) and `access_token` are required; `user_type`, when present, is `msa`;
   `xuid` is optional.
+- Optional renewal: `client_id`, `refresh_token` (both) and `expires_at` (Unix seconds, when the access token
+  ends). With them the game renews the account itself shortly before joining a server and again when the
+  session service answers invalid session, then keeps playing with the new token. Without them an expired
+  token means joining fails until the launcher starts the game again. The game keeps these values in memory only.
 - `--session-stdin`: write the JSON to the game's standard input and close it.
 - `--session-file PATH`: a file the game reads once and deletes at once. On Unix its mode must be 0600; a file
   older than two minutes is refused (and deleted).

@@ -223,6 +223,14 @@ struct Entry {
     touched: std::time::Instant,
     /// `None` while the fetch is in flight.
     resolved: Option<Option<ResolvedProfile>>,
+    attempts: u8,
+    answered: std::time::Instant,
+}
+/// A profile fetched by id that got no answer (the services limit how often one profile
+/// may be asked for, and fail now and then) is asked again, a little later each time.
+const MAX_PROFILE_ATTEMPTS: u8 = 8;
+fn profile_retry_wait(attempts: u8) -> std::time::Duration {
+    std::time::Duration::from_secs(15 * u64::from(attempts.max(1)))
 }
 /// `ProfileResolver.Cached`'s cache bounds.
 const MAX_PROFILES: usize = 256;
@@ -308,40 +316,59 @@ impl Resolver {
     /// How the resolution of `key` stands, starting it the first time.
     pub fn state(&mut self, key: &NameOrId) -> Resolve {
         while let Ok((key, resolved)) = self.done.try_recv() {
+            let attempts = self.entries.get(&key).map_or(1, |e| e.attempts);
             self.entries.insert(
                 key,
                 Entry {
                     touched: std::time::Instant::now(),
                     resolved: Some(resolved),
+                    attempts,
+                    answered: std::time::Instant::now(),
                 },
             );
         }
         self.sweep();
+        let mut again = false;
         if let Some(entry) = self.entries.get_mut(key) {
             entry.touched = std::time::Instant::now();
-            return match &entry.resolved {
-                Some(resolved) => Resolve::Done(resolved.clone()),
-                None => Resolve::Pending,
-            };
+            again = matches!(key, NameOrId::Id(_))
+                && matches!(entry.resolved, Some(None))
+                && entry.attempts < MAX_PROFILE_ATTEMPTS
+                && entry.answered.elapsed() >= profile_retry_wait(entry.attempts);
+            if !again {
+                return match &entry.resolved {
+                    Some(resolved) => Resolve::Done(resolved.clone()),
+                    None => Resolve::Pending,
+                };
+            }
+            entry.attempts += 1;
+            entry.resolved = None;
         }
         // `fetchByName` refuses an invalid name without a fetch; like every
         // other empty answer that is the cached result.
         let resolved = matches!(key, NameOrId::Name(name) if !valid_player_name(name));
-        self.entries.insert(
-            key.clone(),
-            Entry {
-                touched: std::time::Instant::now(),
-                resolved: resolved.then_some(None),
-            },
-        );
-        if resolved {
-            return Resolve::Done(None);
+        if !again {
+            self.entries.insert(
+                key.clone(),
+                Entry {
+                    touched: std::time::Instant::now(),
+                    resolved: resolved.then_some(None),
+                    attempts: 1,
+                    answered: std::time::Instant::now(),
+                },
+            );
+            if resolved {
+                return Resolve::Done(None);
+            }
         }
         let (key, send) = (key.clone(), self.send.clone());
         std::thread::spawn(move || {
             let resolved = crate::auth::discovery()
                 .ok()
                 .and_then(|doc| resolve_profile(&key, &doc));
+            if resolved.is_none() {
+                log::warn!("the profile {key:?} could not be fetched from the services");
+            }
             let _ = send.send((key, resolved));
         });
         Resolve::Pending
@@ -678,6 +705,8 @@ pub struct Downloader {
     done: std::sync::mpsc::Receiver<((Kind, String), Option<Vec<u8>>)>,
     send: std::sync::mpsc::Sender<((Kind, String), Option<Vec<u8>>)>,
     ready: Vec<(String, Vec<u8>)>,
+    /// When a download failed and how often, so it is tried again later.
+    failed: std::collections::HashMap<(Kind, String), (std::time::Instant, u32)>,
     /// Locations already in `ready`, so `again` does not double-queue.
     queued: std::collections::HashSet<String>,
     /// Decoded skin images by location, kept so a skin evicted from the
@@ -696,6 +725,7 @@ impl Downloader {
         Self {
             root,
             states: Default::default(),
+            failed: Default::default(),
             done,
             send,
             ready: Vec::new(),
@@ -717,7 +747,11 @@ impl Downloader {
                     }
                     Download::Ready
                 }
-                None => Download::Failed,
+                None => {
+                    let count = self.failed.get(&key).map_or(0, |f| f.1) + 1;
+                    self.failed.insert(key.clone(), (std::time::Instant::now(), count));
+                    Download::Failed
+                }
             };
             self.states.insert(key, state);
         }
@@ -726,7 +760,13 @@ impl Downloader {
         };
         let key = (kind, hash);
         if let Some(state) = self.states.get(&key) {
-            return *state;
+            let retry = *state == Download::Failed
+                && self.failed.get(&key).is_some_and(|(at, count)| {
+                    *count < 6 && at.elapsed() >= std::time::Duration::from_secs(10 * u64::from(*count))
+                });
+            if !retry {
+                return *state;
+            }
         }
         self.states.insert(key.clone(), Download::Pending);
         let digest: String = skin_location(&key.1)["skins/".len()..].to_owned();
@@ -736,8 +776,16 @@ impl Downloader {
             .join(&digest);
         let (url, send) = (url.to_owned(), self.send.clone());
         std::thread::spawn(move || {
-            let bytes = std::fs::read(&file).ok().or_else(|| {
-                let body = http_get(&url)?;
+            let cached = std::fs::read(&file)
+                .ok()
+                .filter(|b| crate::hud::decode_bytes(b).is_ok());
+            let bytes = cached.or_else(|| {
+                let body = (0..3).find_map(|attempt| {
+                    if attempt > 0 {
+                        std::thread::sleep(std::time::Duration::from_millis(700 * attempt));
+                    }
+                    http_get(&url).filter(|b| crate::hud::decode_bytes(b).is_ok())
+                })?;
                 let _ = std::fs::create_dir_all(file.parent()?);
                 let _ = std::fs::write(&file, &body);
                 Some(body)
@@ -1074,6 +1122,41 @@ mod tests {
             "session": {"endpoints": {"getProfileById": {"uri": format!("{base}/session/minecraft/profile/{{profileId}}")}}},
         }});
         assert!(super::resolve_profile(&super::NameOrId::Name("Notch".into()), &doc).is_none());
+    }
+
+    #[test]
+    fn a_profile_without_an_answer_is_asked_again_later() {
+        assert!(super::profile_retry_wait(1) < super::profile_retry_wait(4));
+        let mut resolver = super::Resolver::new();
+        let key = super::NameOrId::Id(1);
+        resolver.entries.insert(
+            key.clone(),
+            super::Entry {
+                touched: std::time::Instant::now(),
+                resolved: Some(None),
+                attempts: 1,
+                answered: std::time::Instant::now(),
+            },
+        );
+        assert!(matches!(resolver.state(&key), super::Resolve::Done(None)));
+        resolver.entries.get_mut(&key).unwrap().answered =
+            std::time::Instant::now() - std::time::Duration::from_secs(60);
+        assert!(matches!(resolver.state(&key), super::Resolve::Pending));
+        assert_eq!(resolver.entries[&key].attempts, 2);
+        let exhausted = super::NameOrId::Id(2);
+        resolver.entries.insert(
+            exhausted.clone(),
+            super::Entry {
+                touched: std::time::Instant::now(),
+                resolved: Some(None),
+                attempts: super::MAX_PROFILE_ATTEMPTS,
+                answered: std::time::Instant::now() - std::time::Duration::from_secs(3600),
+            },
+        );
+        assert!(matches!(
+            resolver.state(&exhausted),
+            super::Resolve::Done(None)
+        ));
     }
 
     /// More skins drawn every frame than there are slots (#3829): a frame's

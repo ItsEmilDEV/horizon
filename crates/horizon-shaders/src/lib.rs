@@ -35,7 +35,7 @@ pub use custom::{Custom, Val};
 pub use discover::{Found, discover};
 pub use lang::Lang;
 pub use macros::{MC_VERSION, Macros, RENDER_STAGES, render_stage};
-pub use options::switches_on;
+pub use options::{option_macros, switches_on};
 pub use pack::{Pack, PackError};
 pub use post::{
     Blend, CELESTIAL_BLEND, Factor, GameInputs, Group, Post, PostProgram, TRANSLUCENT_BLEND,

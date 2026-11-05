@@ -13,9 +13,26 @@ use zip::ZipArchive;
 
 const ROOT: &str = "shaders";
 
+/// `NAME=value` lines; `#` starts a comment.
+fn parse_user_options(text: &str) -> std::collections::HashMap<String, String> {
+    text.lines()
+        .filter_map(|l| {
+            let l = l.trim();
+            if l.is_empty() || l.starts_with('#') {
+                return None;
+            }
+            let (k, v) = l.split_once('=')?;
+            Some((k.trim().to_owned(), v.trim().to_owned()))
+        })
+        .collect()
+}
+
 pub struct Pack {
     name: String,
     files: Files,
+    /// The player's choices from `<pack>.txt` beside the pack (`NAME=value`): a switch is
+    /// `true` or `false`, anything else replaces the option's value.
+    pub user_options: std::collections::HashMap<String, String>,
 }
 
 enum Files {
@@ -69,7 +86,16 @@ impl Pack {
         } else {
             Self::zip_files(fs::read(path)?)?
         };
-        Ok(Self { name, files })
+        let mut options = path.as_os_str().to_owned();
+        options.push(".txt");
+        let user_options = fs::read_to_string(PathBuf::from(options))
+            .map(|text| parse_user_options(&text))
+            .unwrap_or_default();
+        Ok(Self {
+            name,
+            files,
+            user_options,
+        })
     }
 
     /// An archive held in memory; `name` is what [`Pack::name`] returns.
@@ -78,6 +104,7 @@ impl Pack {
         Ok(Self {
             name: name.to_owned(),
             files,
+            user_options: Default::default(),
         })
     }
 
