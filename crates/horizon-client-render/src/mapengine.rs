@@ -525,16 +525,28 @@ pub fn paint_canvas(
     bpp: f64,
     tiles: &FxHashMap<(i32, i32), Arc<Tile>>,
 ) {
-    image.resize(CANVAS * CANVAS * 4, 0);
+    paint_sized(image, CANVAS, cx, cz, bpp, tiles);
+}
+
+/// `paint_canvas` for a canvas `size` texels across.
+pub fn paint_sized(
+    image: &mut Vec<u8>,
+    size: usize,
+    cx: f64,
+    cz: f64,
+    bpp: f64,
+    tiles: &FxHashMap<(i32, i32), Arc<Tile>>,
+) {
+    image.resize(size * size * 4, 0);
     let mut lookup = Lookup { tiles, last: None };
-    let half = CANVAS as f64 / 2.0;
-    for j in 0..CANVAS {
+    let half = size as f64 / 2.0;
+    for j in 0..size {
         let wz = cz + (j as f64 + 0.5 - half) * bpp;
         let z = wz.floor() as i32;
-        for i in 0..CANVAS {
+        for i in 0..size {
             let wx = cx + (i as f64 + 0.5 - half) * bpp;
             let x = wx.floor() as i32;
-            let o = (j * CANVAS + i) * 4;
+            let o = (j * size + i) * 4;
             let rgba = match lookup.get(x, z) {
                 Some((color, height, depth, rgb)) if color & !WALL != 0 => {
                     let north = lookup.get(x, z - 1).filter(|c| c.0 & !WALL != 0).map(|c| c.1);
@@ -548,6 +560,165 @@ pub fn paint_canvas(
                 _ => UNKNOWN,
             };
             image[o..o + 4].copy_from_slice(&rgba);
+        }
+    }
+}
+
+
+/// The world map's canvas size and the part of it the screen shows, in texels.
+pub const WORLD_CANVAS: usize = 1280;
+pub const WORLD_WINDOW: usize = 1024;
+
+struct PaintJob {
+    generation: u64,
+    cx: f64,
+    cz: f64,
+    bpp: f32,
+    tiles: FxHashMap<(i32, i32), Arc<Tile>>,
+}
+pub struct Painted {
+    pub image: Vec<u8>,
+    pub cx: f64,
+    pub cz: f64,
+    pub bpp: f32,
+    generation: u64,
+}
+
+/// One worker that paints the world map's canvas, so the game thread never does.
+pub struct Painter {
+    jobs: Option<Sender<PaintJob>>,
+    done: Receiver<Painted>,
+    worker: Option<JoinHandle<()>>,
+    busy: bool,
+    generation: u64,
+    requested: Option<(f64, f64, f32)>,
+    last: Instant,
+    ready: Option<Painted>,
+    shown: Option<(f64, f64, f32)>,
+}
+
+impl Default for Painter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Painter {
+    pub fn new() -> Self {
+        let (jobs, rx) = channel::<PaintJob>();
+        let (tx, done) = channel::<Painted>();
+        let worker = std::thread::Builder::new()
+            .name("belumi-worldmap".into())
+            .spawn(move || {
+                while let Ok(job) = rx.recv() {
+                    let mut image = Vec::new();
+                    paint_sized(&mut image, WORLD_CANVAS, job.cx, job.cz, f64::from(job.bpp), &job.tiles);
+                    let done = Painted {
+                        image,
+                        cx: job.cx,
+                        cz: job.cz,
+                        bpp: job.bpp,
+                        generation: job.generation,
+                    };
+                    if tx.send(done).is_err() {
+                        return;
+                    }
+                }
+            })
+            .ok();
+        Self {
+            jobs: Some(jobs),
+            done,
+            worker,
+            busy: false,
+            generation: 0,
+            requested: None,
+            last: Instant::now(),
+            ready: None,
+            shown: None,
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.generation += 1;
+        self.requested = None;
+        self.ready = None;
+        self.shown = None;
+        self.busy = false;
+    }
+
+    fn drain(&mut self) {
+        while let Ok(p) = self.done.try_recv() {
+            if p.generation == self.generation {
+                self.ready = Some(p);
+            }
+            self.busy = false;
+        }
+    }
+
+    /// Whether a canvas centred on `shown` at `bpp` no longer serves a view centred on (`x`, `z`).
+    pub fn stale(shown: (f64, f64, f32), x: f64, z: f64, bpp: f32) -> bool {
+        let margin = ((WORLD_CANVAS - WORLD_WINDOW) as f64 / 2.0 - 32.0) * f64::from(bpp);
+        bpp != shown.2 || (x - shown.0).abs() > margin || (z - shown.1).abs() > margin
+    }
+
+    /// Paint a canvas for the view when the last one no longer serves it or
+    /// the map changed; `tiles` is asked for only then, with the block range
+    /// `(x0, z0, x1, z1)` the canvas covers.
+    pub fn want(
+        &mut self,
+        x: f64,
+        z: f64,
+        bpp: f32,
+        changed: bool,
+        tiles: impl FnOnce((f64, f64, f64, f64)) -> FxHashMap<(i32, i32), Arc<Tile>>,
+    ) {
+        self.drain();
+        if self.busy {
+            return;
+        }
+        let stale = match self.requested {
+            None => true,
+            Some(r) => Self::stale(r, x, z, bpp) || (changed && self.last.elapsed() >= REPAINT),
+        };
+        if !stale {
+            return;
+        }
+        let snap = |v: f64| (v / 16.0).round() * 16.0;
+        let (cx, cz) = (snap(x), snap(z));
+        let half = WORLD_CANVAS as f64 / 2.0 * f64::from(bpp);
+        let tiles = tiles((cx - half, cz - half, cx + half, cz + half));
+        self.busy = true;
+        self.last = Instant::now();
+        self.requested = Some((cx, cz, bpp));
+        if let Some(tx) = &self.jobs {
+            let _ = tx.send(PaintJob {
+                generation: self.generation,
+                cx,
+                cz,
+                bpp,
+                tiles,
+            });
+        }
+    }
+
+    pub fn take(&mut self) -> Option<Painted> {
+        self.drain();
+        let p = self.ready.take()?;
+        self.shown = Some((p.cx, p.cz, p.bpp));
+        Some(p)
+    }
+
+    pub fn shown(&self) -> Option<(f64, f64, f32)> {
+        self.shown
+    }
+}
+
+impl Drop for Painter {
+    fn drop(&mut self) {
+        self.jobs = None;
+        if let Some(w) = self.worker.take() {
+            let _ = w.join();
         }
     }
 }
@@ -609,6 +780,42 @@ mod tests {
         let at = (CANVAS / 2 * CANVAS + CANVAS / 2 + 40) * 4;
         assert_ne!(&near[at..at + 4], &UNKNOWN);
         assert_eq!(&far[at..at + 4], &UNKNOWN);
+    }
+
+    #[test]
+    fn the_world_canvas_serves_a_view_until_it_nears_the_edge() {
+        let shown = (0.0, 0.0, 1.0);
+        assert!(!Painter::stale(shown, 50.0, -60.0, 1.0));
+        assert!(Painter::stale(shown, 100.0, 0.0, 1.0));
+        assert!(Painter::stale(shown, 0.0, 0.0, 2.0));
+        assert!(!Painter::stale((0.0, 0.0, 4.0), 300.0, 0.0, 4.0));
+    }
+
+    #[test]
+    fn the_painter_paints_once_and_waits_for_a_reason_to_paint_again() {
+        let mut painter = Painter::new();
+        let mut asked = 0;
+        painter.want(5.0, 5.0, 1.0, false, |_| {
+            asked += 1;
+            FxHashMap::default()
+        });
+        let mut got = None;
+        for _ in 0..300 {
+            got = painter.take();
+            if got.is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let got = got.expect("a painted world canvas");
+        assert_eq!(got.image.len(), WORLD_CANVAS * WORLD_CANVAS * 4);
+        assert_eq!((got.cx, got.cz), (0.0, 0.0));
+        painter.want(5.0, 5.0, 1.0, false, |_| {
+            asked += 1;
+            FxHashMap::default()
+        });
+        assert_eq!(asked, 1);
+        assert_eq!(painter.shown(), Some((0.0, 0.0, 1.0)));
     }
 
     #[test]

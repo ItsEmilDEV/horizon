@@ -1,41 +1,42 @@
 use super::{Dim, Game, native_hooks::NativeMinimap};
 use horizon_client::{
-    extras::Corner,
     hud::{HudBatch, WORLDMAP_SIZE, WORLDMAP_SPRITE, rgba},
-    minimap::View,
+    mapengine::{Painter, WORLD_WINDOW},
+    regionmap::{REGION, RegionMap},
     waypoints::{self, Waypoint, Waypoints},
-    worldmap::Worldmap,
 };
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Instant};
 
 const SAVE_EVERY: f32 = 30.0;
-const MAP_ZOOMS: [f32; 6] = [0.5, 1.0, 2.0, 4.0, 8.0, 16.0];
+const MAP_ZOOMS: [f32; 8] = [0.125, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0];
+const DEFAULT_ZOOM: usize = 2;
 
 pub(super) struct MapState {
     pub(super) server: String,
     waypoints: Option<Waypoints>,
-    worldmap: Worldmap,
+    regions: Option<RegionMap>,
+    painter: Painter,
+    /// Where the open map is centred; none follows the player.
+    centre: Option<(f64, f64)>,
+    last_draw: Option<Instant>,
     loaded_for: Option<(String, &'static str)>,
     since_save: f32,
     pub(super) open: bool,
     zoom: usize,
-    image: Vec<u8>,
-    composed: Option<(View, usize)>,
-    pub(super) compose_skip: u8,
 }
 impl Default for MapState {
     fn default() -> Self {
         Self {
             server: String::new(),
             waypoints: None,
-            worldmap: Worldmap::default(),
+            regions: None,
+            painter: Painter::new(),
+            centre: None,
+            last_draw: None,
             loaded_for: None,
             since_save: 0.0,
             open: false,
-            zoom: 2,
-            image: Vec::new(),
-            composed: None,
-            compose_skip: 0,
+            zoom: DEFAULT_ZOOM,
         }
     }
 }
@@ -134,7 +135,9 @@ impl Game<'_> {
         self.belumi_maps.server.clear();
         self.belumi_maps.loaded_for = None;
         self.belumi_maps.open = false;
-        self.belumi_maps.worldmap = Worldmap::default();
+        self.belumi_maps.regions = None;
+        self.belumi_maps.painter.reset();
+        self.belumi_maps.centre = None;
     }
 
     fn belumi_waypoint_store(&mut self) -> &mut Waypoints {
@@ -153,18 +156,17 @@ impl Game<'_> {
         Self::belumi_dir()
             .join("belumi-maps")
             .join(safe_name(scope))
-            .join(format!("{}.bin", safe_name(dim)))
+            .join(safe_name(dim))
     }
 
     fn belumi_save_map(&mut self, now: bool) {
-        let Some((scope, dim)) = self.belumi_maps.loaded_for.clone() else {
+        let Some(regions) = self.belumi_maps.regions.as_mut() else {
             return;
         };
-        let path = Self::belumi_map_path(&scope, dim);
         if now {
-            self.belumi_maps.worldmap.save(&path);
+            regions.save_now();
         } else {
-            self.belumi_maps.worldmap.save_in_background(&path);
+            regions.save_in_background();
         }
     }
 
@@ -175,12 +177,22 @@ impl Game<'_> {
         let key = (self.belumi_scope(), self.dim.id());
         if self.belumi_maps.loaded_for.as_ref() != Some(&key) {
             self.belumi_save_map(true);
-            self.belumi_maps.worldmap = Worldmap::load(&Self::belumi_map_path(&key.0, key.1));
-            self.belumi_maps.composed = None;
+            self.belumi_maps.regions = Some(RegionMap::open(Self::belumi_map_path(&key.0, key.1)));
+            self.belumi_maps.painter.reset();
+            self.belumi_maps.centre = None;
             self.belumi_maps.loaded_for = Some(key);
         }
         let scanned = self.extras.engine.take_scanned();
-        self.belumi_maps.worldmap.absorb(scanned);
+        let at = self
+            .player
+            .as_ref()
+            .map(|p| ((p.position.x.floor() as i32) >> 4, (p.position.z.floor() as i32) >> 4));
+        if let Some(regions) = self.belumi_maps.regions.as_mut() {
+            regions.absorb(scanned);
+            if let Some(at) = at {
+                regions.trim(at);
+            }
+        }
         self.belumi_maps.since_save += dt;
         if self.belumi_maps.since_save >= SAVE_EVERY {
             self.belumi_maps.since_save = 0.0;
@@ -203,12 +215,20 @@ impl Game<'_> {
     }
 
     pub(super) fn belumi_add_waypoint(&mut self, name: Option<String>) -> String {
+        self.belumi_add_waypoint_at(name, None)
+    }
+
+    /// A waypoint at the player, or at (x, z) on the map with the height the map knows.
+    fn belumi_add_waypoint_at(&mut self, name: Option<String>, spot: Option<(f64, f64)>) -> String {
         let Some(p) = self.native_player() else {
             return "No player to place a waypoint for.".into();
         };
         let scope = self.belumi_scope();
         let dim = p.dimension;
-        let at = [p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32];
+        let at = match spot {
+            Some((x, z)) => [x.floor() as i32, self.belumi_map_height(x, z).unwrap_or(p.y.floor() as i32), z.floor() as i32],
+            None => [p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32],
+        };
         let store = self.belumi_waypoint_store();
         let name = name.unwrap_or_else(|| store.next_name(&scope));
         let reply = match store.add(&scope, dim, &name, at) {
@@ -336,14 +356,21 @@ impl Game<'_> {
         }
         let cfg = &self.settings.belumi;
         if cfg.waypoints && key == cfg.waypoint_key && self.native_playing() {
-            let reply = self.belumi_add_waypoint(None);
+            let at = self.belumi_maps.open.then_some(self.belumi_maps.centre).flatten();
+            let reply = self.belumi_add_waypoint_at(None, at);
             self.native_chat(&reply);
         }
         let cfg = &self.settings.belumi;
         if cfg.worldmap && key == cfg.worldmap_key && self.native_playing() {
             self.belumi_maps.open = !self.belumi_maps.open;
+            self.belumi_maps.centre = None;
+            self.belumi_maps.last_draw = None;
         } else if key == "key.keyboard.escape" {
             self.belumi_maps.open = false;
+        } else if self.belumi_maps.open && key == "key.keyboard.c" {
+            self.belumi_maps.centre = None;
+        } else if self.belumi_maps.open && key == "key.keyboard.enter" {
+            self.belumi_map_teleport();
         }
     }
 
@@ -353,6 +380,52 @@ impl Game<'_> {
         }
         self.belumi_maps.zoom = zoom_step(self.belumi_maps.zoom, -steps);
         *claimed = true;
+    }
+
+    /// The height of the surface the map knows at (x, z), if it has seen it.
+    fn belumi_map_height(&mut self, x: f64, z: f64) -> Option<i32> {
+        let (bx, bz) = (x.floor() as i32, z.floor() as i32);
+        let chunk = (bx >> 4, bz >> 4);
+        let regions = self.belumi_maps.regions.as_mut()?;
+        let tiles = regions.snapshot(chunk.0, chunk.1, chunk.0, chunk.1);
+        let t = tiles.get(&chunk)?;
+        let i = ((bz & 15) * 16 + (bx & 15)) as usize;
+        (t.color[i] & 0x7F != 0).then(|| i32::from(t.height[i]) + 1)
+    }
+
+    fn belumi_map_teleport(&mut self) {
+        let Some((x, z)) = self.belumi_maps.centre else {
+            self.native_chat("Move the map to a place first (hold the left button and drag).");
+            return;
+        };
+        let Some(y) = self.belumi_map_height(x, z) else {
+            self.native_chat("The map has not seen that place yet.");
+            return;
+        };
+        let command = format!("/tp @s {:.1} {} {:.1}", x.floor() + 0.5, y, z.floor() + 0.5);
+        self.belumi_maps.open = false;
+        self.handle_chat_input(&command);
+    }
+
+    pub(super) fn belumi_maps_open(&self) -> bool {
+        self.belumi_maps.open
+    }
+
+    fn extras_left_held(&self) -> bool {
+        self.left_button_held()
+    }
+
+    /// Mouse movement while the map is open and the left button is held pans it.
+    pub(super) fn belumi_map_drag(&mut self, xo: f64, yo: f64) {
+        if !self.belumi_maps.open || !self.extras_left_held() {
+            return;
+        }
+        let bpp = f64::from(MAP_ZOOMS[self.belumi_maps.zoom]);
+        let Some(p) = self.native_player() else {
+            return;
+        };
+        let (cx, cz) = self.belumi_maps.centre.unwrap_or((p.x, p.z));
+        self.belumi_maps.centre = Some((cx - xo * bpp, cz - yo * bpp));
     }
 
     pub(super) fn belumi_draw_worldmap(&mut self, batch: &mut HudBatch) {
@@ -367,47 +440,77 @@ impl Game<'_> {
             return;
         };
         let bpp = MAP_ZOOMS[self.belumi_maps.zoom];
-        let view = View {
-            x: p.x,
-            z: p.z,
-            yaw: p.yaw,
-            rotate: false,
-            blocks_per_pixel: bpp,
-            round: false,
-        };
-        let moved = self.belumi_maps.composed.is_none_or(|(c, _)| {
-            (c.x - view.x).abs().max((c.z - view.z).abs()) as f32 >= bpp / 2.0
-                || c.blocks_per_pixel != bpp
-        });
-        let fresh = self.belumi_maps.worldmap.is_dirty() && self.belumi_maps.compose_skip == 0;
-        if (moved || fresh) && self.belumi_maps.compose_skip == 0 {
-            let mut image = std::mem::take(&mut self.belumi_maps.image);
-            self.belumi_maps.worldmap.compose(view, WORLDMAP_SIZE, &mut image);
+        let now = Instant::now();
+        let dt = self
+            .belumi_maps
+            .last_draw
+            .map_or(0.0, |t| now.duration_since(t).as_secs_f64().min(0.1));
+        self.belumi_maps.last_draw = Some(now);
+        let pan = self.belumi_pan_keys();
+        if pan != (0.0, 0.0) {
+            let speed = 600.0 * f64::from(bpp) * dt;
+            let (cx, cz) = self.belumi_maps.centre.unwrap_or((p.x, p.z));
+            self.belumi_maps.centre = Some((cx + pan.0 * speed, cz + pan.1 * speed));
+        }
+        let (mx, mz) = self.belumi_maps.centre.unwrap_or((p.x, p.z));
+        let changed = self
+            .belumi_maps
+            .regions
+            .as_mut()
+            .is_some_and(|r| r.take_changed());
+        if let Some(regions) = self.belumi_maps.regions.as_mut() {
+            self.belumi_maps.painter.want(mx, mz, bpp, changed, |(x0, z0, x1, z1)| {
+                regions.snapshot(
+                    (x0.floor() as i32) >> 4,
+                    (z0.floor() as i32) >> 4,
+                    (x1.floor() as i32) >> 4,
+                    (z1.floor() as i32) >> 4,
+                )
+            });
+        }
+        if let Some(done) = self.belumi_maps.painter.take() {
             let (w, h) = (atlas.width as f32, atlas.height as f32);
             self.map_patches.push(horizon_client::font::Patch {
                 x: (sprite.u0 * w).round() as u32,
                 y: (sprite.v0 * h).round() as u32,
                 width: WORLDMAP_SIZE as u32,
                 height: WORLDMAP_SIZE as u32,
-                rgba: image.clone(),
+                rgba: done.image,
             });
-            self.belumi_maps.image = image;
-            self.belumi_maps.composed = Some((view, self.belumi_maps.zoom));
-            self.belumi_maps.compose_skip = 2;
         }
-        self.belumi_maps.compose_skip = self.belumi_maps.compose_skip.saturating_sub(1);
         let side = (batch.height - 24.0).min(batch.width - 24.0).max(64.0);
         let (x, y) = ((batch.width - side) / 2.0, (batch.height - side) / 2.0);
         batch.fill(&self.gui.atlas, 0.0, 0.0, batch.width, batch.height, rgba(0, 0, 0, 150));
-        batch.rect_uv(x, y, side, side, sprite, u32::MAX);
-        let scale = side / WORLDMAP_SIZE as f32;
+        let scale = side / WORLD_WINDOW as f32;
+        if let Some((cx, cz, cb)) = self.belumi_maps.painter.shown() {
+            let canvas = WORLDMAP_SIZE as f64;
+            let texel = |wx: f64, wz: f64| {
+                (
+                    ((wx - cx) / f64::from(cb) + canvas / 2.0) / canvas,
+                    ((wz - cz) / f64::from(cb) + canvas / 2.0) / canvas,
+                )
+            };
+            let half = WORLD_WINDOW as f64 / 2.0 * f64::from(bpp);
+            let (u0, v0) = texel(mx - half, mz - half);
+            let (u1, v1) = texel(mx + half, mz + half);
+            let span = (sprite.u1 - sprite.u0, sprite.v1 - sprite.v0);
+            let r = horizon_client::hud::Rect {
+                u0: sprite.u0 + span.0 * u0 as f32,
+                u1: sprite.u0 + span.0 * u1 as f32,
+                v0: sprite.v0 + span.1 * v0 as f32,
+                v1: sprite.v0 + span.1 * v1 as f32,
+                ..sprite
+            };
+            batch.rect_uv(x, y, side, side, r, u32::MAX);
+        }
         let to_screen = |wx: f64, wz: f64| {
             (
-                x + side / 2.0 + ((wx - view.x) as f32 / bpp) * scale,
-                y + side / 2.0 + ((wz - view.z) as f32 / bpp) * scale,
+                x + side / 2.0 + ((wx - mx) as f32 / bpp) * scale,
+                y + side / 2.0 + ((wz - mz) as f32 / bpp) * scale,
             )
         };
-        let (px, py) = (x + side / 2.0, y + side / 2.0);
+        let (pwx, pwz) = to_screen(p.x, p.z);
+        let (px, py) = (pwx, pwz);
         if let Some(r) = self.gui.atlas.sprites.get("map/decorations/player").copied() {
             let (s, c) = (p.yaw + 180.0 + 180.0).to_radians().sin_cos();
             let q = |dx: f32, dy: f32| [px + dx * c - dy * s, py + dx * s + dy * c];
@@ -443,17 +546,34 @@ impl Game<'_> {
                 self.native_text(batch, &w.name, [sx + 4.0, sy - 4.0], w.color, true);
             }
         }
+        let (cx, cy) = (x + side / 2.0, y + side / 2.0);
+        batch.fill(&self.gui.atlas, cx - 5.0, cy - 0.5, 4.0, 1.0, 0xFFFF_FFFF);
+        batch.fill(&self.gui.atlas, cx + 1.0, cy - 0.5, 4.0, 1.0, 0xFFFF_FFFF);
+        batch.fill(&self.gui.atlas, cx - 0.5, cy - 5.0, 1.0, 4.0, 0xFFFF_FFFF);
+        batch.fill(&self.gui.atlas, cx - 0.5, cy + 1.0, 1.0, 4.0, 0xFFFF_FFFF);
         let title = format!(
-            "World map  {:.0} {:.0}  {} blocks/px   [wheel: zoom]",
-            p.x,
-            p.z,
-            bpp
+            "World map  {:.0} {:.0}  {} blocks/px",
+            mx, mz, bpp
         );
         self.native_text(batch, &title, [x + 4.0, y + 4.0], 0x00FF_FFFF, true);
-        if self.belumi_maps.worldmap.is_empty() {
-            self.native_text(batch, "Explore to fill the map.", [px - 50.0, py + 14.0], 0x00AA_AAAA, true);
+        let help = "Drag: left button  |  Arrows/WASD: move  |  Wheel: zoom  |  C: centre on you  |  B: waypoint here  |  Enter: teleport  |  M: close";
+        self.native_text(batch, help, [x + 4.0, y + side - 12.0], 0x00CC_CCCC, true);
+        let explored = self.belumi_maps.regions.as_ref().is_none_or(|r| r.tile_count() == 0);
+        if explored {
+            self.native_text(batch, "Explore to fill the map.", [cx - 50.0, cy + 14.0], 0x00AA_AAAA, true);
         }
-        let _ = Corner::TopLeft;
+        let _ = REGION;
+    }
+
+    /// The map's pan direction from the movement keys and arrows.
+    fn belumi_pan_keys(&self) -> (f64, f64) {
+        use winit::keyboard::KeyCode as K;
+        let held = |a: K, b: K| self.keys.contains(&a) || self.keys.contains(&b);
+        let axis = |neg: bool, pos: bool| f64::from(i8::from(pos) - i8::from(neg));
+        (
+            axis(held(K::KeyA, K::ArrowLeft), held(K::KeyD, K::ArrowRight)),
+            axis(held(K::KeyW, K::ArrowUp), held(K::KeyS, K::ArrowDown)),
+        )
     }
 
     pub(super) fn belumi_zoom_active(&self) -> bool {

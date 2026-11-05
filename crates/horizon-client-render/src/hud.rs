@@ -92,7 +92,7 @@ pub const MAP_SLOTS: usize = 256;
 /// The atlas slot the minimap extra draws into.
 pub const MINIMAP_SPRITE: &str = "horizon/minimap";
 pub const WORLDMAP_SPRITE: &str = "horizon/worldmap";
-pub const WORLDMAP_SIZE: usize = 256;
+pub const WORLDMAP_SIZE: usize = crate::mapengine::WORLD_CANVAS;
 /// Atlas slots for downloaded player skins (`skins/<sha1>`), 64x64 each.
 /// Vanilla registers a texture per skin. Here the slots are shared
 /// (`skins::SkinSlots`): skins drawn in the last frame keep theirs, and a

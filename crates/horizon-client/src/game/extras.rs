@@ -45,6 +45,9 @@ impl Game<'_> {
     fn extras_now(&self) -> f64 {
         self.started.elapsed().as_secs_f64()
     }
+    pub(super) fn left_button_held(&self) -> bool {
+        self.extras.mouse[0]
+    }
     /// Mouse buttons while playing, for mods' clicks.
     pub(super) fn extras_mouse(&mut self, button: MouseButton, pressed: bool) {
         self.native_mouse_event(button, pressed);

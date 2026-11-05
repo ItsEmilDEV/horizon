@@ -5852,7 +5852,7 @@ impl Game<'_> {
         let camera_eye = self.camera_eye_height();
         let stick = self.pad_move();
         if self.riding.is_some() && self.player.is_some() {
-            let playing = self.screen == Screen::Playing && !self.belumi_freecam_active();
+            let playing = self.screen == Screen::Playing && !self.belumi_input_taken();
             let held = |k| playing && self.keys.contains(&k);
             let keys = Keys {
                 forward: held(KeyCode::KeyW),
@@ -5870,7 +5870,7 @@ impl Game<'_> {
         let riding = self.riding.is_some();
         let entity_collisions = self.player_entity_collisions();
         let spin_targets = self.spin_targets();
-        let freecam = self.belumi_freecam_active();
+        let freecam = self.belumi_input_taken();
         let sprint_window = self.settings.sprint_window;
         self.sync_player_body();
         let Some(player) = self.player.as_mut() else {
@@ -6400,6 +6400,8 @@ impl Game<'_> {
             self.tutorial.mouse(xo, yo);
             if self.belumi_freecam_active() {
                 self.belumi_freecam_turn(xo, yo);
+            } else if self.belumi_maps_open() {
+                self.belumi_map_drag(xo, yo);
             } else {
                 let zoom = self.zoom_turn_scale();
                 self.turn_player(xo * zoom, yo * zoom);
@@ -13377,7 +13379,7 @@ impl Game<'_> {
     }
     /// A mouse button while playing (window or control socket).
     fn play_mouse(&mut self, button: MouseButton, pressed: bool) -> Result<()> {
-        if self.sleeping.is_some() || (pressed && self.belumi_freecam_active()) {
+        if self.sleeping.is_some() || (pressed && self.belumi_input_taken()) {
             return Ok(());
         }
         // key.spectatorHotbar (the middle button) opens the spectator menu

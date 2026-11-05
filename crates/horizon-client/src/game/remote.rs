@@ -4370,7 +4370,7 @@ impl Game<'_> {
         if self.player.is_none() {
             return Ok(());
         }
-        let playing = self.screen == Screen::Playing && !self.belumi_freecam_active();
+        let playing = self.screen == Screen::Playing && !self.belumi_input_taken();
         let held = |k| playing && self.keys.contains(&k);
         let keys = Keys {
             forward: held(KeyCode::KeyW),
