@@ -1326,6 +1326,44 @@ impl OptionsUi {
         let label = format!("{}: {}", item.caption(), item.value(&s.extras));
         button(0.0, 0.0, 150.0, Text::literal(label), Act::Extra(item))
     }
+    fn horizon_rows(&self, s: &Settings) -> Vec<Row> {
+                let open =
+                    |key: &str, page: Page| button(0.0, 0.0, 150.0, tr(key), Act::Push(page));
+                vec![
+                    Row::Buttons(
+                        open("horizon.pages.open.graphics", Page::Graphics),
+                        Some(open(
+                            "horizon.pages.open.graphics_advanced",
+                            Page::GraphicsAdvanced,
+                        )),
+                    ),
+                    Row::Buttons(
+                        open("horizon.pages.open.shader_packs", Page::ShaderPacks),
+                        Some(open("horizon.pages.open.controller", Page::Controller)),
+                    ),
+                    Row::Buttons(
+                        open("horizon.pages.open.extras", Page::Extras),
+                        Some(open("horizon.pages.open.mods", Page::Mods)),
+                    ),
+                    // No AI hides the AI Agent page and everything AI.
+                    Row::Buttons(
+                        self.extra_button(s, crate::extras::Item::DiscordPresence),
+                        Some(if s.extras.no_ai {
+                            self.extra_button(s, crate::extras::Item::NoAi)
+                        } else {
+                            open("horizon.pages.open.agent", Page::Agent)
+                        }),
+                    ),
+                ]
+                .into_iter()
+                .chain(
+                    (!s.extras.no_ai).then(|| {
+                        Row::Buttons(self.extra_button(s, crate::extras::Item::NoAi), None)
+                    }),
+                )
+                .collect()
+    }
+
     fn belumi_button(&self, s: &Settings, item: crate::belumi::Item) -> Widget {
         let value = format!("{}: {}", item.caption(), item.value(&s.belumi));
         let label = if item.key_name().is_some() && self.selected_key == item.key_name() {
@@ -1598,7 +1636,8 @@ impl OptionsUi {
                 rows
             }
             Page::Belumi => {
-                let mut rows = Vec::new();
+                let mut rows = vec![Row::Header("Graphics, shaders and engine")];
+                rows.extend(self.horizon_rows(s));
                 let mut section = Vec::new();
                 let flush = |rows: &mut Vec<Row>, section: &mut Vec<crate::belumi::Item>| {
                     rows.extend(section.chunks(2).map(|c| {
@@ -1626,46 +1665,7 @@ impl OptionsUi {
                 ));
                 rows
             }
-            Page::Horizon => {
-                // Two to a row, as vanilla's OptionsList.addSmall lays out
-                // buttons; each opens a page built from vanilla's widgets.
-                let open =
-                    |key: &str, page: Page| button(0.0, 0.0, 150.0, tr(key), Act::Push(page));
-                vec![
-                    Row::Buttons(
-                        open("horizon.pages.open.graphics", Page::Graphics),
-                        Some(open(
-                            "horizon.pages.open.graphics_advanced",
-                            Page::GraphicsAdvanced,
-                        )),
-                    ),
-                    Row::Buttons(
-                        open("horizon.pages.open.shader_packs", Page::ShaderPacks),
-                        Some(open("horizon.pages.open.controller", Page::Controller)),
-                    ),
-                    Row::Buttons(
-                        open("horizon.pages.open.extras", Page::Extras),
-                        Some(open("horizon.pages.open.mods", Page::Mods)),
-                    ),
-                    Row::Buttons(open("belumi.pages.open.settings", Page::Belumi), None),
-                    // No AI hides the AI Agent page and everything AI.
-                    Row::Buttons(
-                        self.extra_button(s, crate::extras::Item::DiscordPresence),
-                        Some(if s.extras.no_ai {
-                            self.extra_button(s, crate::extras::Item::NoAi)
-                        } else {
-                            open("horizon.pages.open.agent", Page::Agent)
-                        }),
-                    ),
-                ]
-                .into_iter()
-                .chain(
-                    (!s.extras.no_ai).then(|| {
-                        Row::Buttons(self.extra_button(s, crate::extras::Item::NoAi), None)
-                    }),
-                )
-                .collect()
-            }
+            Page::Horizon => self.horizon_rows(s),
             Page::Agent => {
                 let mut rows = vec![Row::Buttons(
                     self.extra_button(s, crate::extras::Item::AgentControl),
@@ -1968,7 +1968,7 @@ impl OptionsUi {
                     // Vanilla's Telemetry Data and Credits slots: Horizon's
                     // settings and its mods, as a mod adds its button here.
                     // Credits & Attribution (WinScreen's credits) follows them.
-                    ("horizon.pages.open.horizon_settings", Some(Page::Horizon)),
+                    ("belumi.pages.open.settings", Some(Page::Belumi)),
                     ("horizon.pages.open.mods", Some(Page::Mods)),
                     ("options.credits_and_attribution", Some(Page::Credits)),
                 ];
@@ -3948,7 +3948,7 @@ mod tests {
                 false,
             )
         };
-        for page in [Page::Horizon, Page::Extras] {
+        for page in [Page::Belumi, Page::Extras] {
             assert_eq!(
                 click(&mut ui, &mut s, Act::Push(page)),
                 vec![Event::ButtonClick]
@@ -3998,7 +3998,7 @@ mod tests {
             ui.key(&mut s, &atlas, winit::keyboard::KeyCode::Escape, None),
             vec![Event::Changed]
         );
-        assert_eq!(ui.page(), Page::Horizon);
+        assert_eq!(ui.page(), Page::Belumi);
     }
 
     #[test]
@@ -4761,7 +4761,7 @@ mod tests {
         let main = pushes(&mut ui);
         assert_eq!(
             &main[main.len() - 3..],
-            [Page::Horizon, Page::Mods, Page::Credits]
+            [Page::Belumi, Page::Mods, Page::Credits]
         );
         ui.push(Page::Horizon);
         assert_eq!(
@@ -4773,7 +4773,6 @@ mod tests {
                 Page::Controller,
                 Page::Extras,
                 Page::Mods,
-                Page::Belumi,
                 Page::Agent,
             ]
         );
