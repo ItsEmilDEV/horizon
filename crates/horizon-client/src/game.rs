@@ -50,6 +50,7 @@ mod beacon;
 mod beds;
 mod beehives;
 mod belumi;
+mod belumi_diagnose;
 mod belumi_freecam;
 mod belumi_maps;
 mod map_entities;
@@ -346,6 +347,8 @@ struct Options {
     /// `--world-frames N`: exit after N frames drawn in the world (smoke runs; the world may load slowly).
     world_frames: Option<u64>,
     screenshot_after: Option<u64>,
+    /// `--diagnose-shots DIR`: take a few screenshots turning around, then quit (the launcher's diagnose run).
+    diagnose_shots: Option<PathBuf>,
     timeout: Duration,
     report: Option<PathBuf>,
     world: Option<String>,
@@ -493,6 +496,7 @@ impl Options {
             frames: None,
             world_frames: None,
             screenshot_after: None,
+            diagnose_shots: None,
             timeout: Duration::from_secs(120),
             report: None,
             world: None,
@@ -598,6 +602,7 @@ impl Options {
                             "--timeout-seconds" => o.timeout = Duration::from_secs(value.parse()?),
                             "--smoke-report" => o.report = Some(value.into()),
                             "--screenshot-after" => o.screenshot_after = Some(value.parse()?),
+                            "--diagnose-shots" => o.diagnose_shots = Some(value.into()),
                             "--width" => o.window_size[0] = value.parse::<u32>()?.max(1),
                             "--height" => o.window_size[1] = value.parse::<u32>()?.max(1),
                             // Vanilla opens only a level id that is one folder of saves/. --world, for
@@ -2118,6 +2123,7 @@ struct Game<'a> {
     native_shaders: native_shaders::NativeShaders,
     /// The quality step applied to the pack, and the pack the shaders-off step put away.
     belumi_quality: Option<u8>,
+    belumi_diag: belumi_diagnose::DiagnoseState,
     belumi_quality_pack: String,
     /// The native lifecycle bookkeeping.
     native_lifecycle: native_lifecycle::NativeLifecycle,
@@ -15178,6 +15184,7 @@ impl<'a> Game<'a> {
             panel: Default::default(),
             native_shaders: Default::default(),
             belumi_quality: None,
+            belumi_diag: Default::default(),
             belumi_quality_pack: String::new(),
             native_lifecycle: Default::default(),
             sky_darken_memo: Default::default(),

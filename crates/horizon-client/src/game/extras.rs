@@ -72,6 +72,7 @@ impl Game<'_> {
             self.extras.mouse = [false; 2];
         }
         self.update_minimap();
+        self.belumi_diagnose_frame();
         // For mods (`render.frame-stats`, `native_frame_rate`).
         let now = self.extras_now();
         self.extras.fps.record(now, elapsed.as_secs_f32() * 1000.0);
