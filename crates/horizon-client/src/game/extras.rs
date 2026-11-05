@@ -294,6 +294,10 @@ impl Game<'_> {
     /// by the caller). The top left corner gives way to the debug screen.
     pub(super) fn draw_extras(&mut self, batch: &mut HudBatch) {
         let map = self.minimap_shown();
+        let waypoint_dots = match &map {
+            Some((_, size, view)) => self.map_waypoint_dots(view, *size),
+            None => Vec::new(),
+        };
         let visible = |corner| !(self.debug && corner == Corner::TopLeft);
         let mut corners = Corners::new(batch.width, batch.height, self.effect_rows_height());
         let atlas = &self.gui.atlas;
@@ -307,7 +311,8 @@ impl Game<'_> {
             } else {
                 (180.0 + view.yaw, None)
             };
-            let dots = self.map_entity_dots(&view, map_size);
+            let mut dots = self.map_entity_dots(&view, map_size);
+            dots.extend(waypoint_dots);
             let (right, forward) = view.axes();
             let look = extras_hud::MinimapLook {
                 corner: map_corner,

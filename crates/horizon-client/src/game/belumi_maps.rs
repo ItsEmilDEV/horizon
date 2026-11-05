@@ -306,7 +306,7 @@ impl Game<'_> {
             .collect()
     }
 
-    fn belumi_visible_waypoints(&mut self) -> Vec<Waypoint> {
+    pub(super) fn belumi_visible_waypoints(&mut self) -> Vec<Waypoint> {
         let Some(p) = self.native_player() else {
             return Vec::new();
         };

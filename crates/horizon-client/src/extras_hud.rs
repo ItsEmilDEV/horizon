@@ -95,6 +95,8 @@ pub struct Dot {
     pub x: f32,
     pub y: f32,
     pub color: u32,
+    /// A waypoint: drawn larger with a light edge, pinned to the rim when out of range.
+    pub waypoint: bool,
 }
 pub fn draw_minimap(
     batch: &mut HudBatch,
@@ -154,8 +156,13 @@ pub fn draw_minimap(
         batch.fill(atlas, x + size - 1.0, y, 1.0, size, edge);
     }
     for d in dots {
-        batch.fill(atlas, cx + d.x - 2.0, cy + d.y - 2.0, 4.0, 4.0, 0xFF00_0000);
-        batch.fill(atlas, cx + d.x - 1.5, cy + d.y - 1.5, 3.0, 3.0, d.color);
+        if d.waypoint {
+            batch.fill(atlas, cx + d.x - 3.5, cy + d.y - 3.5, 7.0, 7.0, 0xFFFF_FFFF);
+            batch.fill(atlas, cx + d.x - 2.5, cy + d.y - 2.5, 5.0, 5.0, d.color);
+        } else {
+            batch.fill(atlas, cx + d.x - 2.0, cy + d.y - 2.0, 4.0, 4.0, 0xFF00_0000);
+            batch.fill(atlas, cx + d.x - 1.5, cy + d.y - 1.5, 3.0, 3.0, d.color);
+        }
     }
     if let Some(r) = atlas.sprites.get("map/decorations/player").copied() {
         // MapRenderer's decorations draw the sprite flipped: its arrow
