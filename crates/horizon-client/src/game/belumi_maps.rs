@@ -2,20 +2,18 @@ use super::{Dim, Game, native_hooks::NativeMinimap};
 use horizon_client::{
     extras::Corner,
     hud::{HudBatch, WORLDMAP_SIZE, WORLDMAP_SPRITE, rgba},
-    minimap::{Layer, Minimap, View},
+    minimap::View,
     waypoints::{self, Waypoint, Waypoints},
     worldmap::Worldmap,
 };
-use std::{path::PathBuf, time::Duration};
+use std::path::PathBuf;
 
-const EXPLORE_BUDGET: Duration = Duration::from_micros(150);
 const SAVE_EVERY: f32 = 30.0;
 const MAP_ZOOMS: [f32; 6] = [0.5, 1.0, 2.0, 4.0, 8.0, 16.0];
 
 pub(super) struct MapState {
     pub(super) server: String,
     waypoints: Option<Waypoints>,
-    explorer: Minimap,
     worldmap: Worldmap,
     loaded_for: Option<(String, &'static str)>,
     since_save: f32,
@@ -30,7 +28,6 @@ impl Default for MapState {
         Self {
             server: String::new(),
             waypoints: None,
-            explorer: Minimap::default(),
             worldmap: Worldmap::default(),
             loaded_for: None,
             since_save: 0.0,
@@ -137,7 +134,6 @@ impl Game<'_> {
         self.belumi_maps.server.clear();
         self.belumi_maps.loaded_for = None;
         self.belumi_maps.open = false;
-        self.belumi_maps.explorer.clear();
         self.belumi_maps.worldmap = Worldmap::default();
     }
 
@@ -180,25 +176,10 @@ impl Game<'_> {
         if self.belumi_maps.loaded_for.as_ref() != Some(&key) {
             self.belumi_save_map(true);
             self.belumi_maps.worldmap = Worldmap::load(&Self::belumi_map_path(&key.0, key.1));
-            self.belumi_maps.explorer.clear();
             self.belumi_maps.composed = None;
             self.belumi_maps.loaded_for = Some(key);
         }
-        let Some(p) = self.player.as_ref() else {
-            return;
-        };
-        let center = ((p.position.x.floor() as i32) >> 4, (p.position.z.floor() as i32) >> 4);
-        let radius = self.settings.render_distance.clamp(2, 10);
-        self.belumi_maps.explorer.record = true;
-        self.belumi_maps.explorer.update(
-            &self.world,
-            self.res.facts(),
-            center,
-            radius,
-            Layer::Surface,
-            EXPLORE_BUDGET,
-        );
-        let scanned = self.belumi_maps.explorer.take_scanned();
+        let scanned = self.extras.engine.take_scanned();
         self.belumi_maps.worldmap.absorb(scanned);
         self.belumi_maps.since_save += dt;
         if self.belumi_maps.since_save >= SAVE_EVERY {

@@ -7,7 +7,8 @@ use horizon_client::{
     extras::{Corner, Cps, FpsCounter, fov_target},
     extras_hud::{self, Corners},
     hud::{HudBatch, MINIMAP_SPRITE},
-    minimap::{self, Layer, Minimap, View},
+    mapengine::{self, MapEngine, Want},
+    minimap::View,
     multiplayer,
     reconnect::{Retry, Tracker},
     title::Mode,
@@ -21,14 +22,22 @@ pub(super) struct ExtrasState {
     /// Left and right mouse buttons: held, and their clicks.
     mouse: [bool; 2],
     cps: [Cps; 2],
-    minimap: Minimap,
-    /// The dimension the minimap's tiles belong to.
+    /// The map engine both maps live on.
+    pub(super) engine: MapEngine,
+    /// The dimension the map's tiles belong to.
     minimap_dim: Option<Dim>,
+    /// The map shows below (a cave or the Nether), and since when the
+    /// surroundings ask for the other.
+    cave: bool,
+    cave_flip: Option<std::time::Instant>,
+    /// The canvas rect last uploaded for the minimap, in atlas texels.
+    canvas_uploaded: bool,
     /// Auto-reconnect's attempts at the current server.
     reconnect: Tracker,
 }
-/// CPU time the minimap's tiles may take per frame.
-const MINIMAP_BUDGET: Duration = Duration::from_micros(300);
+/// Going underground is shown after this long, coming back up after the second.
+const CAVE_ENTER: Duration = Duration::from_millis(500);
+const CAVE_LEAVE: Duration = Duration::from_millis(1200);
 
 impl Game<'_> {
     fn extras_now(&self) -> f64 {
@@ -152,46 +161,79 @@ impl Game<'_> {
     fn minimap_wanted(&self) -> Option<NativeMinimap> {
         self.native_minimap_now()
     }
-    /// Refresh the minimap's tiles within the frame budget, recompose its
-    /// image when the view or a tile changed, and queue the upload.
+    /// Once per frame: send new or changed chunks to the map workers, ask for a
+    /// canvas when the view needs one, and upload the one a worker finished.
     fn update_minimap(&mut self) {
-        let Some((_, _, view)) = self.minimap_shown() else {
+        let shown = self.minimap_shown();
+        let world_map = self.settings.belumi.worldmap && self.player.is_some();
+        if shown.is_none() && !world_map {
             if self.minimap_wanted().is_none() || self.player.is_none() {
-                self.extras.minimap.clear();
+                self.extras.engine.clear();
                 self.extras.minimap_dim = None;
             }
             return;
-        };
-        if self.extras.minimap_dim != Some(self.dim) {
-            self.extras.minimap.clear();
-            self.extras.minimap_dim = Some(self.dim);
         }
+        if self.extras.minimap_dim != Some(self.dim) {
+            self.extras.engine.clear();
+            self.extras.minimap_dim = Some(self.dim);
+            self.extras.cave = self.dim == Dim::Nether;
+            self.extras.cave_flip = None;
+        }
+        self.extras.engine.record = world_map;
         let Some(p) = self.player.as_ref() else {
             return;
         };
         let head = (p.position.y + f64::from(p.dimensions.eye_height)).floor() as i32;
-        let (bx, bz) = (view.x.floor() as i32, view.z.floor() as i32);
-        // Underground, under a roof or in the Nether: the floor around the player.
-        let covered = self.world.light(bx, head, bz) >> 4 == 0;
-        let layer = if self.dim == Dim::Nether || covered {
-            Layer::Below(head)
+        let (bx, bz) = (p.position.x.floor() as i32, p.position.z.floor() as i32);
+        let covered = self.dim == Dim::Nether || self.world.light(bx, head, bz) >> 4 == 0;
+        if covered == self.extras.cave {
+            self.extras.cave_flip = None;
         } else {
-            Layer::Surface
-        };
-        // The chunks the image can reach (its corners when it turns).
-        let reach = minimap::SIZE as f32 / 2.0 * view.blocks_per_pixel * std::f32::consts::SQRT_2;
-        let radius = ((reach / 16.0).ceil() as i32 + 1).min(self.settings.render_distance.max(2));
-        self.extras.minimap.update(
+            let since = *self.extras.cave_flip.get_or_insert_with(std::time::Instant::now);
+            let wait = if covered { CAVE_ENTER } else { CAVE_LEAVE };
+            if self.dim == Dim::Nether || since.elapsed() >= wait {
+                self.extras.cave = covered;
+                self.extras.cave_flip = None;
+            }
+        }
+        let cave = self.extras.cave;
+        let render = self.settings.render_distance.max(2);
+        let mut surface_radius = if world_map { render.clamp(2, 10) } else { 0 };
+        let mut cave_plan = None;
+        if let Some((_, _, view)) = &shown {
+            // The chunks the canvas can reach.
+            let reach = mapengine::WINDOW as f32 / 2.0
+                * view.blocks_per_pixel
+                * std::f32::consts::SQRT_2;
+            let radius = ((reach / 16.0).ceil() as i32 + 1).min(render);
+            if cave {
+                cave_plan = Some((radius, head));
+            } else {
+                surface_radius = surface_radius.max(radius);
+            }
+        }
+        if self.dim == Dim::Nether {
+            surface_radius = -1;
+        }
+        self.extras.engine.update(
             &self.world,
             self.res.facts(),
             (bx >> 4, bz >> 4),
-            radius,
-            layer,
-            MINIMAP_BUDGET,
+            surface_radius,
+            cave_plan,
         );
-        if !self.extras.minimap.compose(view) {
+        let Some((_, _, view)) = shown else {
             return;
-        }
+        };
+        self.extras.engine.want_canvas(Want {
+            x: view.x,
+            z: view.z,
+            bpp: view.blocks_per_pixel,
+            cave,
+        });
+        let Some(canvas) = self.extras.engine.take_canvas() else {
+            return;
+        };
         let Some(rect) = self.gui.atlas.sprites.get(MINIMAP_SPRITE).copied() else {
             return;
         };
@@ -199,10 +241,11 @@ impl Game<'_> {
         self.map_patches.push(horizon_client::font::Patch {
             x: (rect.u0 * w).round() as u32,
             y: (rect.v0 * h).round() as u32,
-            width: minimap::SIZE as u32,
-            height: minimap::SIZE as u32,
-            rgba: self.extras.minimap.image.clone(),
+            width: mapengine::CANVAS as u32,
+            height: mapengine::CANVAS as u32,
+            rgba: canvas.image,
         });
+        self.extras.canvas_uploaded = true;
     }
     /// A mod's zoom in effect (`native_zoom`): (factor, smooth, turning
     /// scale); none is 1.
@@ -238,7 +281,7 @@ impl Game<'_> {
         let atlas = &self.gui.atlas;
         if let Some((map_corner, map_size, view)) = map
             && visible(map_corner)
-            && !self.extras.minimap.image.is_empty()
+            && let Some((cx, cz, bpp, _)) = self.extras.engine.shown()
             && let Some(image) = atlas.sprites.get(MINIMAP_SPRITE).copied()
         {
             let (arrow, north) = if view.rotate {
@@ -247,6 +290,7 @@ impl Game<'_> {
                 (180.0 + view.yaw, None)
             };
             let dots = self.map_entity_dots(&view, map_size);
+            let (right, forward) = view.axes();
             let look = extras_hud::MinimapLook {
                 corner: map_corner,
                 size: map_size,
@@ -254,6 +298,16 @@ impl Game<'_> {
                 arrow,
                 north,
                 dots: &dots,
+                canvas: extras_hud::CanvasLook {
+                    centre: (cx, cz),
+                    blocks_per_texel: f64::from(bpp),
+                    player: (view.x, view.z),
+                    right,
+                    forward,
+                    round: view.round,
+                    texels: mapengine::CANVAS as f32,
+                    window: mapengine::WINDOW as f32,
+                },
             };
             extras_hud::draw_minimap(batch, atlas, &mut corners, &look);
         }

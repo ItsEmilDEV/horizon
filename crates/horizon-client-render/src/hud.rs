@@ -319,9 +319,9 @@ impl HudAtlas {
         // The minimap extra's image (game/extras.rs).
         images.push((
             MINIMAP_SPRITE.into(),
-            crate::minimap::SIZE as u32,
-            crate::minimap::SIZE as u32,
-            vec![0; crate::minimap::SIZE * crate::minimap::SIZE * 4],
+            crate::mapengine::CANVAS as u32,
+            crate::mapengine::CANVAS as u32,
+            vec![0; crate::mapengine::CANVAS * crate::mapengine::CANVAS * 4],
         ));
         images.push((
             WORLDMAP_SPRITE.into(),

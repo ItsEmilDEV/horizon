@@ -17,9 +17,9 @@ use std::time::{Duration, Instant};
 /// The image's side in texels.
 pub const SIZE: usize = 128;
 /// Marks a column the map cuts through (a wall at the player's height).
-const WALL: u8 = 0x80;
+pub(crate) const WALL: u8 = 0x80;
 /// Water's and lava's map colours (`MapColor.WATER`, `FIRE`).
-const WATER: u8 = 12;
+pub(crate) const WATER: u8 = 12;
 const LAVA: u8 = 4;
 /// A tile whose chunk changed is rescanned at most this often.
 const RESCAN: Duration = Duration::from_secs(1);
@@ -84,6 +84,74 @@ impl Palette {
     }
 }
 
+
+/// What the scanner needs of a chunk: blocks by position and which sections hold anything.
+pub trait Blocks {
+    fn block_at(&self, x: i32, y: i32, z: i32) -> u32;
+    fn bottom(&self) -> i32;
+    fn section_total(&self) -> usize;
+    fn section_is_uniform(&self, s: usize, air: u32) -> bool;
+}
+impl Blocks for Chunk {
+    fn block_at(&self, x: i32, y: i32, z: i32) -> u32 {
+        self.get(x, y, z)
+    }
+    fn bottom(&self) -> i32 {
+        self.min_y()
+    }
+    fn section_total(&self) -> usize {
+        self.sections.len()
+    }
+    fn section_is_uniform(&self, s: usize, air: u32) -> bool {
+        self.sections.get(s).is_some_and(|sec| sec.is_uniform(air))
+    }
+}
+
+/// The sections of a chunk, shared: what a worker thread scans.
+#[derive(Clone)]
+pub struct Snapshot {
+    min_y: i32,
+    pub sections: Vec<std::sync::Arc<crate::chunk::Section>>,
+}
+impl Snapshot {
+    pub fn of(chunk: &Chunk) -> Self {
+        Self {
+            min_y: chunk.min_y(),
+            sections: chunk.sections.clone(),
+        }
+    }
+    /// Whether `chunk` still holds exactly these sections (an edit copies the one it touches).
+    pub fn matches(&self, chunk: &Chunk) -> bool {
+        self.min_y == chunk.min_y()
+            && self.sections.len() == chunk.sections.len()
+            && self
+                .sections
+                .iter()
+                .zip(&chunk.sections)
+                .all(|(a, b)| std::sync::Arc::ptr_eq(a, b))
+    }
+}
+impl Blocks for Snapshot {
+    fn block_at(&self, x: i32, y: i32, z: i32) -> u32 {
+        let s = (y - self.min_y) >> 4;
+        if s < 0 {
+            return 0;
+        }
+        self.sections
+            .get(s as usize)
+            .map_or(0, |sec| sec.get(crate::chunk::index(x, y, z)))
+    }
+    fn bottom(&self) -> i32 {
+        self.min_y
+    }
+    fn section_total(&self) -> usize {
+        self.sections.len()
+    }
+    fn section_is_uniform(&self, s: usize, air: u32) -> bool {
+        self.sections.get(s).is_some_and(|sec| sec.is_uniform(air))
+    }
+}
+
 #[derive(Clone)]
 pub struct Tile {
     /// Map colour id per column (`z * 16 + x`), `| WALL` for cut walls.
@@ -96,6 +164,9 @@ pub struct Tile {
     scanned: Instant,
 }
 impl Tile {
+    pub fn layer(&self) -> Layer {
+        self.layer
+    }
     pub fn surface(&self) -> bool {
         self.layer == Layer::Surface
     }
@@ -113,8 +184,8 @@ impl Tile {
 /// `MapItem.update` for one column: the first block with a map colour
 /// going down, the fluid's colour over a fluid unless the block is sturdy on
 /// top (`getCorrectStateForFluidBlock`), and the fluid's depth.
-fn scan_column(
-    chunk: &Chunk,
+fn scan_column<C: Blocks>(
+    chunk: &C,
     palette: &Palette,
     x: i32,
     z: i32,
@@ -123,14 +194,14 @@ fn scan_column(
 ) -> (u8, i16, u8) {
     let mut y = top;
     if let Layer::Below(head) = layer {
-        let (color, flags) = palette.get(chunk.get(x, head, z));
+        let (color, flags) = palette.get(chunk.block_at(x, head, z));
         if flags & AIR == 0 && color != 0 && flags & FLUID == 0 {
             return (color | WALL, head as i16, 0);
         }
     }
-    let bottom = chunk.min_y();
+    let bottom = chunk.bottom();
     while y > bottom {
-        let (mut color, flags) = palette.get(chunk.get(x, y, z));
+        let (mut color, flags) = palette.get(chunk.block_at(x, y, z));
         if color == 0 {
             y -= 1;
             continue;
@@ -139,7 +210,7 @@ fn scan_column(
         let fluid = flags & FLUID;
         if fluid != 0 {
             let mut below = y - 1;
-            while below > bottom && palette.get(chunk.get(x, below, z)).1 & FLUID != 0 {
+            while below > bottom && palette.get(chunk.block_at(x, below, z)).1 & FLUID != 0 {
                 depth = depth.saturating_add(1);
                 below -= 1;
             }
@@ -153,26 +224,21 @@ fn scan_column(
     (0, bottom as i16, 0)
 }
 /// The highest block of a chunk worth scanning from.
-fn top_of(chunk: &Chunk, air: u32, layer: Layer) -> i32 {
-    let surface = (0..chunk.sections.len())
+fn top_of<C: Blocks>(chunk: &C, air: u32, layer: Layer) -> i32 {
+    let surface = (0..chunk.section_total())
         .rev()
-        .find(|&s| {
-            chunk
-                .sections
-                .get(s)
-                .is_some_and(|sec| !sec.is_uniform(air))
-        })
-        .map_or(chunk.min_y(), |s| chunk.min_y() + s as i32 * 16 + 15);
+        .find(|&s| !chunk.section_is_uniform(s, air))
+        .map_or(chunk.bottom(), |s| chunk.bottom() + s as i32 * 16 + 15);
     match layer {
         Layer::Surface => surface,
         Layer::Below(head) => surface.min(head),
     }
 }
-fn scan_tile(chunk: &Chunk, palette: &Palette, air: u32, layer: Layer, revision: u64) -> Tile {
+pub fn scan_tile<C: Blocks>(chunk: &C, palette: &Palette, air: u32, layer: Layer, revision: u64) -> Tile {
     let top = top_of(chunk, air, layer);
     let mut tile = Tile {
         color: [0; 256],
-        height: [chunk.min_y() as i16; 256],
+        height: [chunk.bottom() as i16; 256],
         depth: [0; 256],
         revision,
         layer,
@@ -231,7 +297,7 @@ impl View {
 }
 
 /// `MapColor.getColorFromPackedId` as RGBA.
-fn packed_rgba(id: u8, brightness: u8) -> [u8; 4] {
+pub(crate) fn packed_rgba(id: u8, brightness: u8) -> [u8; 4] {
     let id = usize::from(id);
     if id == 0 || id >= MAP_COLORS.len() {
         return [0; 4];
@@ -243,7 +309,7 @@ fn packed_rgba(id: u8, brightness: u8) -> [u8; 4] {
 }
 /// The map item's shading at scale 1: brighter facing a lower north
 /// neighbour, darker facing a higher one, dithered; water by depth.
-fn brightness(color: u8, height: i16, north: Option<i16>, depth: u8, parity: i32) -> u8 {
+pub(crate) fn brightness(color: u8, height: i16, north: Option<i16>, depth: u8, parity: i32) -> u8 {
     if color & WALL != 0 {
         return 3;
     }
@@ -268,7 +334,7 @@ fn brightness(color: u8, height: i16, north: Option<i16>, depth: u8, parity: i32
         1
     }
 }
-const UNKNOWN: [u8; 4] = [20, 20, 20, 200];
+pub(crate) const UNKNOWN: [u8; 4] = [20, 20, 20, 200];
 const BORDER: [u8; 4] = [10, 10, 10, 230];
 
 #[derive(Default)]
@@ -327,7 +393,7 @@ impl Minimap {
                 if !stale {
                     continue;
                 }
-                let tile = scan_tile(chunk, palette, air, layer, world.revision);
+                let tile = scan_tile(&**chunk, palette, air, layer, world.revision);
                 if self.tiles.get(&key).is_none_or(|t| {
                     t.color != tile.color || t.height != tile.height || t.depth != tile.depth
                 }) {

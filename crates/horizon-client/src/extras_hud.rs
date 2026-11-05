@@ -56,6 +56,37 @@ pub struct MinimapLook<'a> {
     pub arrow: f32,
     pub north: Option<(f32, f32)>,
     pub dots: &'a [Dot],
+    pub canvas: CanvasLook,
+}
+/// Where the painted canvas lies in the world, so the GPU can shift and turn it.
+#[derive(Clone, Copy, Debug)]
+pub struct CanvasLook {
+    pub centre: (f64, f64),
+    pub blocks_per_texel: f64,
+    pub player: (f64, f64),
+    /// The world's right and forward as the map's x and up (`View::axes`).
+    pub right: [f64; 2],
+    pub forward: [f64; 2],
+    pub round: bool,
+    pub texels: f32,
+    pub window: f32,
+}
+impl CanvasLook {
+    /// The canvas texture coordinate under a point `(dx, dy)` GUI pixels from the map's centre.
+    fn uv(&self, image: Rect, size: f32, dx: f32, dy: f32) -> [f32; 2] {
+        let scale = f64::from(self.window / size);
+        let (u, v) = (f64::from(dx) * scale, f64::from(dy) * scale);
+        let bpp = self.blocks_per_texel;
+        let wx = self.player.0 + bpp * (u * self.right[0] - v * self.forward[0]);
+        let wz = self.player.1 + bpp * (u * self.right[1] - v * self.forward[1]);
+        let half = f64::from(self.texels) / 2.0;
+        let tx = ((wx - self.centre.0) / bpp + half) / f64::from(self.texels);
+        let ty = ((wz - self.centre.1) / bpp + half) / f64::from(self.texels);
+        [
+            image.u0 + (image.u1 - image.u0) * tx as f32,
+            image.v0 + (image.v1 - image.v0) * ty as f32,
+        ]
+    }
 }
 /// An entity marker: its offset from the map centre in GUI pixels
 /// (x right, y down) and its 0xAARRGGBB colour.
@@ -78,10 +109,50 @@ pub fn draw_minimap(
         arrow,
         north,
         dots,
+        canvas,
     } = *look;
     let (x, y) = corners.place(corner, size, size);
-    batch.rect_uv(x, y, size, size, image, u32::MAX);
     let (cx, cy) = (x + size / 2.0, y + size / 2.0);
+    let half = size / 2.0;
+    let edge = rgba(10, 10, 10, 230);
+    if canvas.round {
+        const SEGMENTS: usize = 64;
+        let ring = |i: usize, r: f32| {
+            let a = i as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+            (a.cos() * r, a.sin() * r)
+        };
+        for i in 0..SEGMENTS {
+            let (a, b) = (ring(i, half), ring(i + 1, half));
+            let at = |p: (f32, f32)| ([cx + p.0, cy + p.1], canvas.uv(image, size, p.0, p.1));
+            let (pa, pb) = (at(a), at(b));
+            let c = ([cx, cy], canvas.uv(image, size, 0.0, 0.0));
+            batch.quad([c.0, pa.0, pb.0, pb.0], [c.1, pa.1, pb.1, pb.1], u32::MAX);
+            let (ia, ib) = (ring(i, half - 1.5), ring(i + 1, half - 1.5));
+            batch.fill_quad(
+                atlas,
+                [
+                    [cx + a.0, cy + a.1],
+                    [cx + b.0, cy + b.1],
+                    [cx + ib.0, cy + ib.1],
+                    [cx + ia.0, cy + ia.1],
+                ],
+                edge,
+            );
+        }
+    } else {
+        let corner = |dx: f32, dy: f32| ([cx + dx, cy + dy], canvas.uv(image, size, dx, dy));
+        let (a, b, c, d) = (
+            corner(-half, -half),
+            corner(half, -half),
+            corner(half, half),
+            corner(-half, half),
+        );
+        batch.quad([a.0, b.0, c.0, d.0], [a.1, b.1, c.1, d.1], u32::MAX);
+        batch.fill(atlas, x, y, size, 1.0, edge);
+        batch.fill(atlas, x, y + size - 1.0, size, 1.0, edge);
+        batch.fill(atlas, x, y, 1.0, size, edge);
+        batch.fill(atlas, x + size - 1.0, y, 1.0, size, edge);
+    }
     for d in dots {
         batch.fill(atlas, cx + d.x - 2.0, cy + d.y - 2.0, 4.0, 4.0, 0xFF00_0000);
         batch.fill(atlas, cx + d.x - 1.5, cy + d.y - 1.5, 3.0, 3.0, d.color);
