@@ -321,6 +321,11 @@ impl Game<'_> {
                 arrow,
                 north,
                 dots: &dots,
+                edge: if self.settings.belumi.ui_style == 0 {
+                    horizon_client::hud::rgba(10, 10, 10, 230)
+                } else {
+                    horizon_client::hud::rgba(255, 255, 255, 90)
+                },
                 canvas: extras_hud::CanvasLook {
                     centre: (cx, cz),
                     blocks_per_texel: f64::from(bpp),

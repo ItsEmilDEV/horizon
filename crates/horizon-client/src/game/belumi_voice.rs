@@ -475,7 +475,7 @@ mod real {
                 + if group_line.is_some() { 10.0 } else { 0.0 }
                 + speakers.len() as f32 * 10.0;
             let (x, y) = corners.place(corner, width, height);
-            self.native_fill(batch, [x, y, width, height], 0x6000_0000);
+            self.belumi_panel(batch, [x, y, width, height]);
             self.native_fill(batch, [x + 3.0, y + 3.0, 5.0, 5.0], dot);
             self.native_text(batch, &title, [x + 11.0, y + 2.0], WHITE & 0x00FF_FFFF, true);
             let mut row = y + 12.0;

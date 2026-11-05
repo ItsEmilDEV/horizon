@@ -57,6 +57,8 @@ pub struct MinimapLook<'a> {
     pub north: Option<(f32, f32)>,
     pub dots: &'a [Dot],
     pub canvas: CanvasLook,
+    /// The colour of the map's rim and border.
+    pub edge: u32,
 }
 /// Where the painted canvas lies in the world, so the GPU can shift and turn it.
 #[derive(Clone, Copy, Debug)]
@@ -112,11 +114,11 @@ pub fn draw_minimap(
         north,
         dots,
         canvas,
+        edge,
     } = *look;
     let (x, y) = corners.place(corner, size, size);
     let (cx, cy) = (x + size / 2.0, y + size / 2.0);
     let half = size / 2.0;
-    let edge = rgba(10, 10, 10, 230);
     if canvas.round {
         const SEGMENTS: usize = 64;
         let ring = |i: usize, r: f32| {

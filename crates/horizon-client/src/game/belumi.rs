@@ -200,6 +200,20 @@ impl Game<'_> {
         lines
     }
 
+    /// A panel behind HUD text in the chosen interface style.
+    pub(super) fn belumi_panel(&self, batch: &mut HudBatch, rect: [f32; 4]) {
+        let [x, y, w, h] = rect;
+        if self.settings.belumi.ui_style == 0 {
+            self.native_fill(batch, rect, BOX_COLOR);
+            return;
+        }
+        let body = 0xE614_1821;
+        self.native_fill(batch, [x + 1.0, y, w - 2.0, h], body);
+        self.native_fill(batch, [x, y + 1.0, w, h - 2.0], body);
+        self.native_fill(batch, [x + 1.0, y, w - 2.0, 1.0], 0x2EFF_FFFF);
+        self.native_fill(batch, [x + 1.0, y + h - 1.0, w - 2.0, 1.0], 0x4000_0000);
+    }
+
     fn belumi_draw_lines(&self, batch: &mut HudBatch, corners: &mut Corners, corner: Corner, lines: &[String]) {
         if lines.is_empty() || !self.native_corner_shown(corner) {
             return;
@@ -211,7 +225,7 @@ impl Game<'_> {
             + 6.0;
         let height = lines.len() as f32 * 10.0 + 2.0;
         let (x, y) = corners.place(corner, width, height);
-        self.native_fill(batch, [x, y, width, height], BOX_COLOR);
+        self.belumi_panel(batch, [x, y, width, height]);
         for (i, line) in lines.iter().enumerate() {
             self.native_text(batch, line, [x + 3.0, y + 2.0 + i as f32 * 10.0], TEXT_COLOR, true);
         }
