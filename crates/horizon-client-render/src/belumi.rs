@@ -76,6 +76,8 @@ pub struct Belumi {
     pub voice_device: String,
     pub quality: u8,
     pub ui_style: u8,
+    /// The shader pack the "Shaders off" step put away.
+    pub quality_pack: String,
     pub map_grid: bool,
     pub map_slime: bool,
     pub plugins: bool,
@@ -135,6 +137,7 @@ impl Default for Belumi {
             voice_device: String::new(),
             quality: 0,
             ui_style: 0,
+            quality_pack: String::new(),
             map_grid: false,
             map_slime: false,
             plugins: false,
@@ -505,6 +508,25 @@ const SPECS: &[Spec] = &[
     key!(InspectorKey, "Inspector key", Some(Item::Inspector), INSPECTOR_KEY, inspector_key),
     corner!(InspectorCorner, "Inspector corner", "The screen corner the inspector sits in.", Some(Item::Inspector), inspector_corner, Corner::BottomLeft),
 ];
+
+/// The headings of the settings sections, in order.
+pub fn section_names() -> Vec<&'static str> {
+    rows().into_iter().filter_map(Result::err).collect()
+}
+
+/// The items of the `index`th section.
+pub fn section_items(index: usize) -> Vec<Item> {
+    let mut at = None;
+    let mut out = Vec::new();
+    for row in rows() {
+        match row {
+            Err(_) => at = Some(at.map_or(0, |n| n + 1)),
+            Ok(item) if at == Some(index) => out.push(item),
+            Ok(_) => {}
+        }
+    }
+    out
+}
 
 pub fn rows() -> Vec<Result<Item, &'static str>> {
     use Item::*;

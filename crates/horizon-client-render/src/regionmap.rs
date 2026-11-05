@@ -21,6 +21,8 @@ const RECORD: usize = 2 + 256 + 512 + 256 + 1024;
 const MAX_RAW: u64 = 64 * 1024 * 1024;
 /// Regions kept in memory, farthest first to go.
 const KEEP: usize = 96;
+/// Region numbers beyond this are not worlds, whatever a file is called.
+const MAX_REGION: i32 = 1 << 20;
 
 struct Region {
     tiles: FxHashMap<(i32, i32), Arc<Tile>>,
@@ -102,12 +104,30 @@ pub fn decode_region(bytes: &[u8], region: (i32, i32)) -> Vec<((i32, i32), Tile)
         .collect()
 }
 
-fn write_region(dir: &Path, region: (i32, i32), tiles: &[((i32, i32), Arc<Tile>)]) {
+static WRITE_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+static WRITTEN: std::sync::Mutex<Option<FxHashMap<PathBuf, u64>>> = std::sync::Mutex::new(None);
+
+/// A ticket for one save; a write older than one already done to the same file is dropped.
+fn write_ticket() -> u64 {
+    WRITE_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+}
+
+fn write_region(dir: &Path, region: (i32, i32), tiles: &[((i32, i32), Arc<Tile>)], ticket: u64) {
     let _ = fs::create_dir_all(dir);
     let path = file(dir, region);
-    let tmp = path.with_extension("tmp");
-    if fs::write(&tmp, encode_region(tiles)).is_ok() {
-        let _ = fs::rename(&tmp, &path);
+    let bytes = encode_region(tiles);
+    let Ok(mut written) = WRITTEN.lock() else {
+        return;
+    };
+    let last = written.get_or_insert_with(FxHashMap::default);
+    if last.get(&path).is_some_and(|&t| t > ticket) {
+        return;
+    }
+    let tmp = path.with_extension(format!("{ticket}.tmp"));
+    if fs::write(&tmp, bytes).is_ok() && fs::rename(&tmp, &path).is_ok() {
+        last.insert(path, ticket);
+    } else {
+        let _ = fs::remove_file(&tmp);
     }
 }
 
@@ -168,7 +188,8 @@ impl RegionMap {
                 let name = e.file_name().into_string().ok()?;
                 let rest = name.strip_prefix("r.")?.strip_suffix(".bin")?;
                 let (x, z) = rest.split_once('.')?;
-                Some((x.parse().ok()?, z.parse().ok()?))
+                let (x, z): (i32, i32) = (x.parse().ok()?, z.parse().ok()?);
+                (x.abs() <= MAX_REGION && z.abs() <= MAX_REGION).then_some((x, z))
             })
             .collect();
         for region in names {
@@ -238,17 +259,19 @@ impl RegionMap {
             return;
         }
         let dir = self.dir.clone();
+        let ticket = write_ticket();
         std::thread::spawn(move || {
             for (region, tiles) in jobs {
-                write_region(&dir, region, &tiles);
+                write_region(&dir, region, &tiles, ticket);
             }
         });
     }
 
     /// Write the changed regions now (leaving the world).
     pub fn save_now(&mut self) {
+        let ticket = write_ticket();
         for (region, tiles) in self.take_dirty() {
-            write_region(&self.dir, region, &tiles);
+            write_region(&self.dir, region, &tiles, ticket);
         }
     }
 

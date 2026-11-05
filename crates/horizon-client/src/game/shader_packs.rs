@@ -450,13 +450,13 @@ impl Game<'_> {
         }
         if want == 5 {
             if !self.settings.horizon.shader_pack.is_empty() {
-                self.belumi_quality_pack = std::mem::take(&mut self.settings.horizon.shader_pack);
+                self.settings.belumi.quality_pack = std::mem::take(&mut self.settings.horizon.shader_pack);
                 self.settings.save(&Self::options_path());
             }
             return;
         }
-        if self.settings.horizon.shader_pack.is_empty() && !self.belumi_quality_pack.is_empty() {
-            self.settings.horizon.shader_pack = std::mem::take(&mut self.belumi_quality_pack);
+        if self.settings.horizon.shader_pack.is_empty() && !self.settings.belumi.quality_pack.is_empty() {
+            self.settings.horizon.shader_pack = std::mem::take(&mut self.settings.belumi.quality_pack);
             self.settings.save(&Self::options_path());
         }
         let name = self.settings.horizon.shader_pack.clone();

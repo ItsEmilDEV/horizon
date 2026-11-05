@@ -132,7 +132,7 @@ impl Game<'_> {
         let cfg = &self.settings.belumi;
         Overlay {
             grid: cfg.map_grid,
-            slime_seed: cfg.map_slime.then(|| self.belumi_world_seed()).flatten(),
+            slime_seed: (cfg.map_slime && self.dim == Dim::Overworld).then(|| self.belumi_world_seed()).flatten(),
         }
     }
 
@@ -305,13 +305,16 @@ impl Game<'_> {
             self.belumi_maps.loaded_for = Some(key);
         }
         let scanned = self.extras.engine.take_scanned();
+        let open = self.belumi_maps.open;
         let at = self
             .player
             .as_ref()
             .map(|p| ((p.position.x.floor() as i32) >> 4, (p.position.z.floor() as i32) >> 4));
         if let Some(regions) = self.belumi_maps.regions.as_mut() {
             regions.absorb(scanned);
-            if let Some(at) = at {
+            if let Some(at) = at
+                && !open
+            {
                 regions.trim(at);
             }
         }

@@ -199,7 +199,7 @@ impl Game<'_> {
             self.extras.engine.set_colors(std::sync::Arc::new(colors));
             self.extras.colors_for = Some(self.pack.context.clone());
         }
-        self.extras.engine.record = world_map;
+        self.extras.engine.set_record(world_map);
         let Some(p) = self.player.as_ref() else {
             return;
         };
@@ -225,7 +225,7 @@ impl Game<'_> {
             let reach = mapengine::WINDOW as f32 / 2.0
                 * view.blocks_per_pixel
                 * std::f32::consts::SQRT_2;
-            let radius = ((reach / 16.0).ceil() as i32 + 1).min(render);
+            let radius = (((reach / 16.0).ceil().clamp(0.0, 4096.0)) as i32).saturating_add(1).min(render);
             if cave {
                 cave_plan = Some((radius, head));
             } else {

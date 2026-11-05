@@ -101,6 +101,9 @@ impl Blocks for Chunk {
         self.min_y()
     }
     fn biome_at(&self, x: i32, y: i32, z: i32) -> u16 {
+        if self.sections.is_empty() {
+            return 0;
+        }
         self.biome(x, y, z)
     }
     fn section_total(&self) -> usize {
@@ -149,6 +152,9 @@ impl Blocks for Snapshot {
         self.min_y
     }
     fn biome_at(&self, x: i32, y: i32, z: i32) -> u16 {
+        if self.sections.is_empty() {
+            return 0;
+        }
         let qy = ((y - self.min_y) >> 2).clamp(0, self.sections.len() as i32 * 4 - 1);
         self.sections.get((qy >> 2) as usize).map_or(0, |sec| {
             sec.biomes

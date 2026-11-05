@@ -2124,7 +2124,6 @@ struct Game<'a> {
     /// The quality step applied to the pack, and the pack the shaders-off step put away.
     belumi_quality: Option<u8>,
     belumi_diag: belumi_diagnose::DiagnoseState,
-    belumi_quality_pack: String,
     /// The native lifecycle bookkeeping.
     native_lifecycle: native_lifecycle::NativeLifecycle,
     /// Meshed sections waiting for an upload budget (Horizon settings).
@@ -15185,7 +15184,6 @@ impl<'a> Game<'a> {
             native_shaders: Default::default(),
             belumi_quality: None,
             belumi_diag: Default::default(),
-            belumi_quality_pack: String::new(),
             native_lifecycle: Default::default(),
             sky_darken_memo: Default::default(),
             persist: Default::default(),

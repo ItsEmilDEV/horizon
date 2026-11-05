@@ -74,6 +74,11 @@ enum Done {
         head: i32,
     },
     Painted(Canvas),
+    Failed {
+        generation: u64,
+        key: (i32, i32),
+        kind: Kind,
+    },
 }
 
 /// What is drawn over the terrain: chunk borders and the chunks slimes spawn in.
@@ -158,6 +163,8 @@ pub struct MapEngine {
     last_paint: Instant,
     ready: Option<Canvas>,
     shown: Option<(f64, f64, f32, bool)>,
+    last_scan: Instant,
+    scan_centre: (i32, i32),
     /// Keep the surface tiles scanned for `take_scanned` (the world map wants them).
     pub record: bool,
 }
@@ -202,6 +209,8 @@ impl MapEngine {
             last_paint: Instant::now(),
             ready: None,
             shown: None,
+            last_scan: Instant::now(),
+            scan_centre: (i32::MAX, i32::MAX),
             record: false,
         }
     }
@@ -218,6 +227,15 @@ impl MapEngine {
         self.shown = None;
         self.generation += 1;
         self.painting = false;
+    }
+
+    /// Start or stop keeping the scanned surface tiles for the world map; starting scans them again.
+    pub fn set_record(&mut self, on: bool) {
+        if on && !self.record {
+            self.surface.clear();
+            self.pending.retain(|(kind, _)| *kind != Kind::Surface);
+        }
+        self.record = on;
     }
 
     /// Colour the maps from the blocks' textures and the biomes (tiles scanned before keep the vanilla colours).
@@ -291,8 +309,13 @@ impl MapEngine {
                 Done::Painted(canvas) => {
                     if canvas.generation == self.generation {
                         self.ready = Some(canvas);
+                        self.painting = false;
                     }
-                    self.painting = false;
+                }
+                Done::Failed { generation, key, kind } => {
+                    if generation == self.generation {
+                        self.pending.remove(&(kind, key));
+                    }
                 }
             }
         }
@@ -313,6 +336,11 @@ impl MapEngine {
         if let Ok(mut p) = self.palette.lock() {
             p.get_or_insert_with(|| Arc::new(Palette::new(facts)));
         }
+        if self.scan_centre == center && self.last_scan.elapsed() < Duration::from_millis(60) {
+            return;
+        }
+        self.scan_centre = center;
+        self.last_scan = Instant::now();
         let air = world.air.0;
         let reach = |k: &(i32, i32), r: i32| {
             (k.0 - center.0).abs() <= r + 2 && (k.1 - center.1).abs() <= r + 2
@@ -479,24 +507,32 @@ fn worker(
                 air,
             } => {
                 let Some(palette) = shared.lock().ok().and_then(|p| p.clone()) else {
+                    if tx.send(Done::Failed { generation, key, kind }).is_err() {
+                        return;
+                    }
                     continue;
                 };
                 let colorize = colors.lock().ok().and_then(|c| c.clone());
-                let tile = scan_tile_with(
-                    &snap,
-                    &palette,
-                    air,
-                    layer,
-                    0,
-                    colorize.as_deref().map(|c| (c as &dyn Colorize, key.0, key.1)),
-                );
-                Done::Scan {
-                    generation,
-                    key,
-                    kind,
-                    tile,
-                    snap,
-                    head,
+                let scanned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    scan_tile_with(
+                        &snap,
+                        &palette,
+                        air,
+                        layer,
+                        0,
+                        colorize.as_deref().map(|c| (c as &dyn Colorize, key.0, key.1)),
+                    )
+                }));
+                match scanned {
+                    Ok(tile) => Done::Scan {
+                        generation,
+                        key,
+                        kind,
+                        tile,
+                        snap,
+                        head,
+                    },
+                    Err(_) => Done::Failed { generation, key, kind },
                 }
             }
             Job::Paint {
@@ -655,6 +691,7 @@ pub struct Painter {
     generation: u64,
     requested: Option<(f64, f64, f32)>,
     overlay: Overlay,
+    dirty: bool,
     last: Instant,
     ready: Option<Painted>,
     shown: Option<(f64, f64, f32)>,
@@ -697,6 +734,7 @@ impl Painter {
             generation: 0,
             requested: None,
             overlay: Overlay::default(),
+            dirty: false,
             last: Instant::now(),
             ready: None,
             shown: None,
@@ -708,6 +746,7 @@ impl Painter {
         self.requested = None;
         self.ready = None;
         self.shown = None;
+        self.dirty = false;
         self.busy = false;
     }
 
@@ -715,8 +754,8 @@ impl Painter {
         while let Ok(p) = self.done.try_recv() {
             if p.generation == self.generation {
                 self.ready = Some(p);
+                self.busy = false;
             }
-            self.busy = false;
         }
     }
 
@@ -739,6 +778,7 @@ impl Painter {
         tiles: impl FnOnce((f64, f64, f64, f64)) -> FxHashMap<(i32, i32), Arc<Tile>>,
     ) {
         self.drain();
+        self.dirty |= changed;
         if self.busy {
             return;
         }
@@ -747,7 +787,7 @@ impl Painter {
             Some(r) => {
                 Self::stale(r, x, z, bpp)
                     || overlay != self.overlay
-                    || (changed && self.last.elapsed() >= REPAINT)
+                    || (self.dirty && self.last.elapsed() >= REPAINT)
             }
         };
         if !stale {
@@ -758,6 +798,7 @@ impl Painter {
         let half = WORLD_CANVAS as f64 / 2.0 * f64::from(bpp);
         let tiles = tiles((cx - half, cz - half, cx + half, cz + half));
         self.busy = true;
+        self.dirty = false;
         self.last = Instant::now();
         self.requested = Some((cx, cz, bpp));
         self.overlay = overlay;

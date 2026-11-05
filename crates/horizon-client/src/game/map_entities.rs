@@ -61,7 +61,7 @@ impl Game<'_> {
         }
         let (right, forward) = view.axes();
         let per_block = f64::from(side) / (SIZE as f64 * f64::from(view.blocks_per_pixel));
-        let half = f64::from(side) / 2.0 - 4.0;
+        let half = (f64::from(side) / 2.0 - 4.0).max(1.0);
         let all = self.belumi_visible_waypoints();
         all.into_iter()
             .map(|w| {

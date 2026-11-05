@@ -35,6 +35,10 @@ impl Game<'_> {
         }
         let t = self.belumi_diag.since.get_or_insert_with(Instant::now).elapsed().as_secs_f32();
         let k = self.belumi_diag.taken;
+        if t > FIRST + STEP * f32::from(SHOTS) + 40.0 {
+            self.options.world_frames = Some(self.world_frames + 1);
+            return;
+        }
         if k >= SHOTS {
             if t > FIRST + STEP * f32::from(SHOTS) + 1.0 {
                 self.options.world_frames = Some(self.world_frames + 1);

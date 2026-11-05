@@ -1041,6 +1041,8 @@ pub enum Page {
     PadBinds,
     Extras,
     Belumi,
+    /// One section of the Belumi settings (HUD, zoom, maps, ...): its index in `belumi::section_names`.
+    BelumiSection(usize),
     /// CreditsAndAttributionScreen.
     Credits,
     /// Horizon Settings: every page Horizon adds, as a mod's settings
@@ -1498,6 +1500,7 @@ impl OptionsUi {
             Page::PadBinds => "horizon.pages.controller_binds",
             Page::Extras => "horizon.pages.extras",
             Page::Belumi => "belumi.pages.settings",
+            Page::BelumiSection(i) => crate::belumi::section_names().get(i).copied().unwrap_or("belumi.pages.settings"),
             Page::Credits => "credits_and_attribution.screen.title",
             Page::Horizon => "horizon.pages.settings",
             Page::Agent => "horizon.pages.agent",
@@ -1638,32 +1641,27 @@ impl OptionsUi {
             Page::Belumi => {
                 let mut rows = vec![Row::Header("Graphics, shaders and engine")];
                 rows.extend(self.horizon_rows(s));
-                let mut section = Vec::new();
-                let flush = |rows: &mut Vec<Row>, section: &mut Vec<crate::belumi::Item>| {
-                    rows.extend(section.chunks(2).map(|c| {
-                        Row::Buttons(
-                            self.belumi_button(s, c[0]),
-                            c.get(1).map(|&b| self.belumi_button(s, b)),
-                        )
-                    }));
-                    section.clear();
-                };
-                for row in crate::belumi::rows() {
-                    match row {
-                        Err(header) => {
-                            flush(&mut rows, &mut section);
-                            rows.push(Row::Header(header));
-                        }
-                        Ok(item) => section.push(item),
-                    }
-                }
-                flush(&mut rows, &mut section);
+                rows.push(Row::Header("Belumi features"));
+                let names = crate::belumi::section_names();
+                rows.extend(names.chunks(2).enumerate().map(|(n, pair)| {
+                    let open = |at: usize| {
+                        button(0.0, 0.0, 150.0, Text::literal(names[at]), Act::Push(Page::BelumiSection(at)))
+                    };
+                    Row::Buttons(open(n * 2), (pair.len() > 1).then(|| open(n * 2 + 1)))
+                }));
                 rows.push(Row::Header("Quick toggles"));
                 rows.push(Row::Buttons(
                     self.extra_button(s, crate::extras::Item::Fullbright),
                     Some(self.extra_button(s, crate::extras::Item::MouseTweaks)),
                 ));
                 rows
+            }
+            Page::BelumiSection(index) => {
+                let items = crate::belumi::section_items(index);
+                items
+                    .chunks(2)
+                    .map(|c| Row::Buttons(self.belumi_button(s, c[0]), c.get(1).map(|&b| self.belumi_button(s, b))))
+                    .collect()
             }
             Page::Horizon => self.horizon_rows(s),
             Page::Agent => {
@@ -3999,6 +3997,36 @@ mod tests {
             vec![Event::Changed]
         );
         assert_eq!(ui.page(), Page::Belumi);
+    }
+
+    #[test]
+    fn the_belumi_page_opens_one_page_per_section_with_that_sections_items() {
+        let s = Settings::default();
+        let mut ui = OptionsUi::default();
+        ui.push(Page::Belumi);
+        let pushes = |ui: &mut OptionsUi, s: &Settings| -> Vec<Page> {
+            let (widgets, _, _, _) = ui.layout(s, 427.0, 600.0);
+            widgets
+                .iter()
+                .filter_map(|w| match &w.kind {
+                    WKind::Button { act: Act::Push(page), active: true, .. } => Some(*page),
+                    _ => None,
+                })
+                .collect()
+        };
+        let sections = crate::belumi::section_names().len();
+        assert!(sections >= 6);
+        let opened = pushes(&mut ui, &s);
+        for i in 0..sections {
+            assert!(opened.contains(&Page::BelumiSection(i)), "section {i}");
+        }
+        ui.push(Page::BelumiSection(2));
+        let (widgets, _, _, _) = ui.layout(&s, 427.0, 600.0);
+        let items = widgets
+            .iter()
+            .filter(|w| matches!(w.kind, WKind::Button { act: Act::Belumi(_), .. }))
+            .count();
+        assert_eq!(items, crate::belumi::section_items(2).len());
     }
 
     #[test]

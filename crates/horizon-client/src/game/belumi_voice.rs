@@ -23,6 +23,8 @@ pub(super) struct VoiceState {
     #[cfg(feature = "belumi-voice")]
     target: String,
     #[cfg(feature = "belumi-voice")]
+    starting: Option<std::sync::mpsc::Receiver<Result<belumi_voice::VoiceClient, String>>>,
+    #[cfg(feature = "belumi-voice")]
     probe: usize,
     #[cfg(feature = "belumi-voice")]
     probe_wait: f32,
@@ -94,13 +96,13 @@ pub(super) fn parse_voice_command(text: &str) -> Option<VoiceCmd> {
     Some(match sub.as_str() {
         "groups" | "list" => VoiceCmd::Groups,
         "group" | "g" => match w.get(2).map(|s| s.to_ascii_lowercase()).as_deref() {
-            Some("create" | "new") => VoiceCmd::Create {
-                name: w.get(3)?.clone(),
-                password: w.get(4).cloned(),
+            Some("create" | "new") => match w.get(3) {
+                Some(name) => VoiceCmd::Create { name: name.clone(), password: w.get(4).cloned() },
+                None => VoiceCmd::Help,
             },
-            Some("join") => VoiceCmd::Join {
-                target: w.get(3)?.clone(),
-                password: w.get(4).cloned(),
+            Some("join") => match w.get(3) {
+                Some(target) => VoiceCmd::Join { target: target.clone(), password: w.get(4).cloned() },
+                None => VoiceCmd::Help,
             },
             Some("leave") => VoiceCmd::Leave,
             Some("list") | None => VoiceCmd::Groups,
@@ -108,13 +110,15 @@ pub(super) fn parse_voice_command(text: &str) -> Option<VoiceCmd> {
         },
         "players" => VoiceCmd::Players,
         "volume" | "vol" => {
-            let player = w.get(2)?.clone();
+            let Some(player) = w.get(2).cloned() else {
+                return Some(VoiceCmd::Help);
+            };
             match w.get(3).map(String::as_str) {
                 None => VoiceCmd::Volume { player, percent: None },
                 Some("reset") => VoiceCmd::VolumeReset(player),
-                Some(p) => VoiceCmd::Volume {
-                    player,
-                    percent: Some(p.trim_end_matches('%').parse::<u16>().ok().filter(|p| *p <= 300)?),
+                Some(p) => match p.trim_end_matches('%').parse::<u16>().ok().filter(|p| *p <= 300) {
+                    Some(percent) => VoiceCmd::Volume { player, percent: Some(percent) },
+                    None => VoiceCmd::Help,
                 },
             }
         }
@@ -250,6 +254,15 @@ mod real {
                     return;
                 }
             };
+            if self.belumi_voice.starting.is_some()
+                || self
+                    .belumi_voice
+                    .client
+                    .as_ref()
+                    .is_some_and(|c| !matches!(c.state(), State::Failed(_)))
+            {
+                return;
+            }
             self.belumi_voice.client = None;
             self.belumi_voice.sent_state = None;
             self.belumi_voice.probe_wait = -1.0;
@@ -262,16 +275,16 @@ mod real {
             let host = self.belumi_maps.server.clone();
             let settings = self.belumi_voice_settings();
             let microphone = Some(self.settings.belumi.voice_device.clone()).filter(|d| !d.is_empty());
-            match VoiceClient::start(init, &host, AudioMode::Devices, settings, microphone) {
-                Ok(c) => {
-                    self.belumi_voice.last_state = None;
-                    self.belumi_voice.client = Some(c);
-                }
-                Err(e) => self.native_chat(&format!("Voice chat: {e}")),
-            }
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let started = VoiceClient::start(init, &host, AudioMode::Devices, settings, microphone);
+                let _ = tx.send(started.map_err(|e| e.to_string()));
+            });
+            self.belumi_voice.starting = Some(rx);
         }
 
         pub(in crate::game) fn belumi_voice_left(&mut self) {
+            self.belumi_voice.starting = None;
             self.belumi_voice.client = None;
             self.belumi_voice.last_state = None;
             self.belumi_voice.held = false;
@@ -316,6 +329,18 @@ mod real {
                     self.belumi_voice_left();
                 }
                 return;
+            }
+            if let Some(rx) = &self.belumi_voice.starting
+                && let Ok(started) = rx.try_recv()
+            {
+                self.belumi_voice.starting = None;
+                match started {
+                    Ok(client) => {
+                        self.belumi_voice.last_state = None;
+                        self.belumi_voice.client = Some(client);
+                    }
+                    Err(e) => self.native_chat(&format!("Voice chat: {e}")),
+                }
             }
             let settings = self.belumi_voice_settings();
             if self.belumi_voice.client.is_none() {
@@ -767,12 +792,12 @@ mod tests {
             Some(Join { target: "2".into(), password: None })
         );
         assert_eq!(parse_voice_command("voice group leave"), Some(Leave));
-        assert_eq!(parse_voice_command("voice group create"), None);
+        assert_eq!(parse_voice_command("voice group create"), Some(Help));
         assert_eq!(
             parse_voice_command("voice volume Alex 150%"),
             Some(Volume { player: "Alex".into(), percent: Some(150) })
         );
-        assert_eq!(parse_voice_command("voice volume Alex 999"), None);
+        assert_eq!(parse_voice_command("voice volume Alex 999"), Some(Help));
         assert_eq!(parse_voice_command("voice volume Alex reset"), Some(VolumeReset("Alex".into())));
         assert_eq!(parse_voice_command("VOICE deafen"), Some(Deafen));
     }
