@@ -1662,6 +1662,9 @@ impl Game<'_> {
                     return ok(json!({ "ok": true, "chat": chat }));
                 }
                 if self.remote.is_some() {
+                    if self.client_mod_command(text) {
+                        return ok(json!({ "ok": true, "chat": self.ui.chat.recent_lines(5) }));
+                    }
                     self.send_chat(&command);
                     return ok(json!({ "ok": true }));
                 }

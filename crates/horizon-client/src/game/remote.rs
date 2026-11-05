@@ -2126,7 +2126,7 @@ impl Game<'_> {
     fn handle_packet(&mut self, packet: C) -> Result<()> {
         match packet {
             C::CustomPayload(p) if self.belumi_voice_channel(&p.channel) => {
-                self.belumi_voice_payload(&p.data);
+                self.belumi_voice_payload(&p.channel, &p.data);
             }
             // ClientCommonPacketListenerImpl.handlePing runs on the game
             // thread, after all preceding packets (especially teleports).

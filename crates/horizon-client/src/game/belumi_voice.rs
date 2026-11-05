@@ -13,6 +13,12 @@ pub(super) struct VoiceState {
     #[cfg(feature = "belumi-voice")]
     held: bool,
     #[cfg(feature = "belumi-voice")]
+    roster: belumi_voice::groups::Roster,
+    #[cfg(feature = "belumi-voice")]
+    sent_state: Option<(bool, bool)>,
+    #[cfg(feature = "belumi-voice")]
+    deafened: bool,
+    #[cfg(feature = "belumi-voice")]
     connecting_for: f32,
     #[cfg(feature = "belumi-voice")]
     target: String,
@@ -33,6 +39,91 @@ pub(super) fn speaking_line(names: &[String]) -> Option<String> {
     }
 }
 
+#[derive(Debug, PartialEq)]
+#[allow(dead_code)]
+pub(super) enum VoiceCmd {
+    Help,
+    Groups,
+    Create { name: String, password: Option<String> },
+    Join { target: String, password: Option<String> },
+    Leave,
+    Players,
+    Volume { player: String, percent: Option<u16> },
+    VolumeReset(String),
+    Mute,
+    Deafen,
+}
+
+#[allow(dead_code)]
+fn words(text: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let (mut quoted, mut any) = (false, false);
+    for c in text.chars() {
+        match c {
+            '"' => {
+                quoted = !quoted;
+                any = true;
+            }
+            c if c.is_whitespace() && !quoted => {
+                if any {
+                    out.push(std::mem::take(&mut cur));
+                    any = false;
+                }
+            }
+            c => {
+                cur.push(c);
+                any = true;
+            }
+        }
+    }
+    if any {
+        out.push(cur);
+    }
+    out
+}
+
+#[allow(dead_code)]
+pub(super) fn parse_voice_command(text: &str) -> Option<VoiceCmd> {
+    let w = words(text);
+    let head = w.first()?.to_ascii_lowercase();
+    if head != "voice" && head != "vc" {
+        return None;
+    }
+    let sub = w.get(1).map(|s| s.to_ascii_lowercase()).unwrap_or_default();
+    Some(match sub.as_str() {
+        "groups" | "list" => VoiceCmd::Groups,
+        "group" | "g" => match w.get(2).map(|s| s.to_ascii_lowercase()).as_deref() {
+            Some("create" | "new") => VoiceCmd::Create {
+                name: w.get(3)?.clone(),
+                password: w.get(4).cloned(),
+            },
+            Some("join") => VoiceCmd::Join {
+                target: w.get(3)?.clone(),
+                password: w.get(4).cloned(),
+            },
+            Some("leave") => VoiceCmd::Leave,
+            Some("list") | None => VoiceCmd::Groups,
+            _ => VoiceCmd::Help,
+        },
+        "players" => VoiceCmd::Players,
+        "volume" | "vol" => {
+            let player = w.get(2)?.clone();
+            match w.get(3).map(String::as_str) {
+                None => VoiceCmd::Volume { player, percent: None },
+                Some("reset") => VoiceCmd::VolumeReset(player),
+                Some(p) => VoiceCmd::Volume {
+                    player,
+                    percent: Some(p.trim_end_matches('%').parse::<u16>().ok().filter(|p| *p <= 300)?),
+                },
+            }
+        }
+        "mute" => VoiceCmd::Mute,
+        "deafen" | "deaf" => VoiceCmd::Deafen,
+        _ => VoiceCmd::Help,
+    })
+}
+
 #[cfg(feature = "belumi-voice")]
 pub(super) use real::register_devices;
 #[cfg(not(feature = "belumi-voice"))]
@@ -41,6 +132,7 @@ pub(super) use stub::register_devices;
 #[cfg(feature = "belumi-voice")]
 mod real {
     use super::*;
+    use belumi_voice::groups::{self, Badge, Incoming};
     use belumi_voice::{
         AudioMode, COMPATIBILITY_VERSION, Listener, Mode, REQUEST_SECRET_CHANNEL, SECRET_CHANNEL,
         State, VoiceClient, VoiceSettings, parse_secret, request_secret_payload,
@@ -53,7 +145,50 @@ mod real {
 
     impl Game<'_> {
         pub(in crate::game) fn belumi_voice_channel(&self, channel: &str) -> bool {
-            channel == SECRET_CHANNEL && self.settings.belumi.voice
+            self.settings.belumi.voice && (channel == SECRET_CHANNEL || groups::is_channel(channel))
+        }
+
+        fn voice_me(&self) -> u128 {
+            horizon_client::auth::current().map_or(0, |a| a.uuid)
+        }
+
+        fn voice_send(&self, channel: &str, data: Vec<u8>) {
+            if let Some(r) = self.remote.as_ref() {
+                r.session.send(Serverbound::CustomPayload(CustomPayload {
+                    channel: channel.to_owned(),
+                    data,
+                }));
+            }
+        }
+
+        fn voice_group_event(&mut self, channel: &str, data: &[u8]) {
+            let incoming = match groups::parse_detect(channel, data) {
+                Ok((i, legacy)) => {
+                    if legacy {
+                        self.belumi_voice.roster.legacy = true;
+                    }
+                    i
+                }
+                Err(e) => {
+                    let head: String = data.iter().take(48).map(|b| format!("{b:02x}")).collect();
+                    log::warn!("voice chat: unreadable {channel} packet ({e}), {} bytes: {head}", data.len());
+                    return;
+                }
+            };
+            let joined = matches!(incoming, Incoming::Joined { wrong_password: false, .. });
+            let me = self.voice_me();
+            self.belumi_voice.roster.apply(incoming, me);
+            if let Some(notice) = self.belumi_voice.roster.notice.take() {
+                self.native_chat(&notice);
+            }
+            if joined {
+                let r = &self.belumi_voice.roster;
+                let text = match r.my_group.and_then(|g| r.groups.get(&g)) {
+                    Some(g) => format!("Joined the group {}.", g.name),
+                    None => "Left the group.".to_owned(),
+                };
+                self.native_chat(&text);
+            }
         }
 
         fn belumi_voice_settings(&self) -> VoiceSettings {
@@ -64,7 +199,7 @@ mod real {
                 mic_gain: c.voice_mic_gain(),
                 volume: c.voice_volume_gain(),
                 muted: self.belumi_voice.muted,
-                deafened: false,
+                deafened: self.belumi_voice.deafened,
             }
         }
 
@@ -103,7 +238,11 @@ mod real {
             self.belumi_voice_request();
         }
 
-        pub(in crate::game) fn belumi_voice_payload(&mut self, data: &[u8]) {
+        pub(in crate::game) fn belumi_voice_payload(&mut self, channel: &str, data: &[u8]) {
+            if channel != SECRET_CHANNEL {
+                self.voice_group_event(channel, data);
+                return;
+            }
             let init = match parse_secret(data) {
                 Ok(i) => i,
                 Err(e) => {
@@ -112,6 +251,7 @@ mod real {
                 }
             };
             self.belumi_voice.client = None;
+            self.belumi_voice.sent_state = None;
             self.belumi_voice.probe_wait = -1.0;
             self.voice_debug(&format!(
                 "Voice chat: server answered, connecting to '{}' port {}.",
@@ -135,6 +275,8 @@ mod real {
             self.belumi_voice.client = None;
             self.belumi_voice.last_state = None;
             self.belumi_voice.held = false;
+            self.belumi_voice.sent_state = None;
+            self.belumi_voice.roster = Default::default();
             self.belumi_voice.probe_wait = -1.0;
         }
 
@@ -149,11 +291,23 @@ mod real {
                 if let Some(c) = self.belumi_voice.client.as_ref() {
                     c.set_talking(on);
                 }
+            } else if pressed && key == cfg.voice_deafen_key && self.native_playing() {
+                self.voice_toggle_deafen();
             } else if pressed && key == cfg.voice_mute_key && self.native_playing() {
                 self.belumi_voice.muted = !self.belumi_voice.muted;
                 let text = if self.belumi_voice.muted { "Microphone muted." } else { "Microphone on." };
                 self.native_chat(text);
             }
+        }
+
+        fn voice_toggle_deafen(&mut self) {
+            self.belumi_voice.deafened = !self.belumi_voice.deafened;
+            let text = if self.belumi_voice.deafened {
+                "Voice chat deafened: you hear nobody and nobody hears you."
+            } else {
+                "Voice chat on."
+            };
+            self.native_chat(text);
         }
 
         pub(in crate::game) fn belumi_voice_frame(&mut self, dt: f32) {
@@ -184,6 +338,20 @@ mod real {
                 return;
             };
             client.set_settings(settings);
+            let want = (self.belumi_voice.muted, self.belumi_voice.deafened);
+            let connected = matches!(client.state(), State::Connected);
+            if connected && self.belumi_voice.sent_state != Some(want) {
+                self.belumi_voice.sent_state = Some(want);
+                let packet = if self.belumi_voice.roster.legacy {
+                    groups::update_state_legacy(want.1)
+                } else {
+                    groups::update_state(want.0, want.1)
+                };
+                self.voice_send(groups::CLIENT_STATE, packet);
+            }
+            let Some(client) = self.belumi_voice.client.as_ref() else {
+                return;
+            };
             let mut report = None;
             if matches!(client.state(), State::Connecting | State::Authenticated) {
                 self.belumi_voice.connecting_for += dt;
@@ -219,8 +387,18 @@ mod real {
                 self.belumi_voice.since_update = 0.0;
                 let players = r.player_positions();
                 let listener = Listener { pos: [p.x, p.y, p.z], yaw: p.yaw };
+                let volumes: std::collections::HashMap<u128, f32> = self
+                    .settings
+                    .belumi
+                    .voice_player_volumes
+                    .iter()
+                    .filter_map(|(k, p)| {
+                        Some((u128::from_str_radix(k, 16).ok()?, f32::from(*p) / 100.0))
+                    })
+                    .collect();
                 if let Some(c) = self.belumi_voice.client.as_ref() {
                     c.update_world(listener, players);
+                    c.set_player_volumes(volumes);
                 }
             }
         }
@@ -277,13 +455,25 @@ mod real {
                 _ => Vec::new(),
             };
             speakers.truncate(6);
+            let group_line = {
+                let r = &self.belumi_voice.roster;
+                r.my_group
+                    .and_then(|g| r.groups.get(&g))
+                    .map(|g| format!("Group: {}", g.name))
+            };
             let bar_width = 64.0;
             let mut width = self.native_text_width(&title) + 12.0;
             for name in &speakers {
                 width = width.max(self.native_text_width(name) + 12.0);
             }
             width = width.max(bar_width + 8.0);
-            let height = 12.0 + if level.is_some() { 8.0 } else { 0.0 } + speakers.len() as f32 * 10.0;
+            if let Some(g) = &group_line {
+                width = width.max(self.native_text_width(g) + 12.0);
+            }
+            let height = 12.0
+                + if level.is_some() { 8.0 } else { 0.0 }
+                + if group_line.is_some() { 10.0 } else { 0.0 }
+                + speakers.len() as f32 * 10.0;
             let (x, y) = corners.place(corner, width, height);
             self.native_fill(batch, [x, y, width, height], 0x6000_0000);
             self.native_fill(batch, [x + 3.0, y + 3.0, 5.0, 5.0], dot);
@@ -299,10 +489,193 @@ mod real {
                 }
                 row += 8.0;
             }
+            if let Some(g) = &group_line {
+                self.native_text(batch, g, [x + 4.0, row], YELLOW & 0x00FF_FFFF, true);
+                row += 10.0;
+            }
             for name in &speakers {
                 self.native_fill(batch, [x + 4.0, row + 2.0, 3.0, 3.0], CYAN);
                 self.native_text(batch, name, [x + 10.0, row], CYAN & 0x00FF_FFFF, true);
                 row += 10.0;
+            }
+        }
+
+        pub(in crate::game) fn belumi_voice_command(&mut self, command: &str, ran: &mut bool) {
+            if *ran {
+                return;
+            }
+            let Some(cmd) = super::parse_voice_command(command) else {
+                return;
+            };
+            *ran = true;
+            if !self.settings.belumi.voice {
+                self.native_chat("Voice chat is off. Turn it on in the Belumi settings.");
+                return;
+            }
+            match cmd {
+                super::VoiceCmd::Help => {
+                    for line in [
+                        "/voice groups | group create NAME [PASSWORD] | group join NAME|NUMBER [PASSWORD] | group leave",
+                        "/voice players | volume PLAYER [0-300|reset] | mute | deafen",
+                        "Quote names with spaces: /voice group create \"My team\"",
+                    ] {
+                        self.native_chat(line);
+                    }
+                }
+                super::VoiceCmd::Groups => {
+                    let r = &self.belumi_voice.roster;
+                    let lines: Vec<String> = r
+                        .listed_groups()
+                        .into_iter()
+                        .enumerate()
+                        .map(|(i, g)| {
+                            format!(
+                                "{}. {} ({}, {} in it{}){}",
+                                i + 1,
+                                g.name,
+                                g.kind_name(),
+                                r.members(g.id),
+                                if g.has_password { ", password" } else { "" },
+                                if r.my_group == Some(g.id) { " <- you" } else { "" },
+                            )
+                        })
+                        .collect();
+                    if lines.is_empty() {
+                        self.native_chat("No groups yet. Make one with /voice group create NAME [PASSWORD].");
+                    }
+                    for l in lines {
+                        self.native_chat(&l);
+                    }
+                }
+                super::VoiceCmd::Create { name, password } => {
+                    if name.is_empty() || name.chars().count() > groups::MAX_GROUP_NAME {
+                        self.native_chat("A group name has 1 to 24 characters.");
+                    } else if password.as_ref().is_some_and(|p| p.chars().count() > groups::MAX_GROUP_NAME) {
+                        self.native_chat("A group password has at most 24 characters.");
+                    } else {
+                        self.voice_send(groups::CREATE_GROUP, groups::create_group(&name, password.as_deref(), 0));
+                    }
+                }
+                super::VoiceCmd::Join { target, password } => {
+                    match self.belumi_voice.roster.find_group(&target).map(|g| g.id) {
+                        Some(id) => self.voice_send(groups::SET_GROUP, groups::join_group(id, password.as_deref())),
+                        None => self.native_chat(&format!("No group matches {target}. See /voice groups.")),
+                    }
+                }
+                super::VoiceCmd::Leave => {
+                    if self.belumi_voice.roster.my_group.is_some() {
+                        self.voice_send(groups::LEAVE_GROUP, groups::leave_group());
+                    } else {
+                        self.native_chat("You are not in a group.");
+                    }
+                }
+                super::VoiceCmd::Players => {
+                    let mut rows: Vec<(String, u128)> = self
+                        .remote
+                        .as_ref()
+                        .map(|r| r.tab_players.iter().map(|(u, p)| (p.name.clone(), *u)).collect())
+                        .unwrap_or_default();
+                    rows.sort_by_key(|(n, _)| n.to_lowercase());
+                    for (name, uuid) in rows {
+                        let state = match self.belumi_voice.roster.players.get(&uuid).and_then(|s| s.badge()) {
+                            Some(Badge::Disconnected) => " [no voice chat]",
+                            Some(Badge::FullMuted) => " [deafened]",
+                            Some(Badge::Muted) => " [muted]",
+                            None => "",
+                        };
+                        let pct = self.settings.belumi.voice_player_volumes.get(&format!("{uuid:032x}"));
+                        let volume = pct.map_or(String::new(), |p| format!(" {p}%"));
+                        self.native_chat(&format!("{name}{state}{volume}"));
+                    }
+                }
+                super::VoiceCmd::Volume { player, percent } => {
+                    let Some((name, uuid)) = self.voice_find_player(&player) else {
+                        self.native_chat(&format!("No player matches {player}."));
+                        return;
+                    };
+                    let key = format!("{uuid:032x}");
+                    match percent {
+                        None => {
+                            let p = self.settings.belumi.voice_player_volumes.get(&key).copied().unwrap_or(100);
+                            self.native_chat(&format!("{name}: {p}%"));
+                        }
+                        Some(p) => {
+                            if p == 100 {
+                                self.settings.belumi.voice_player_volumes.remove(&key);
+                            } else {
+                                self.settings.belumi.voice_player_volumes.insert(key, p);
+                            }
+                            self.settings.save(&Game::options_path());
+                            self.native_chat(&format!("{name}: {p}%"));
+                        }
+                    }
+                }
+                super::VoiceCmd::VolumeReset(player) => match self.voice_find_player(&player) {
+                    Some((name, uuid)) => {
+                        self.settings.belumi.voice_player_volumes.remove(&format!("{uuid:032x}"));
+                        self.settings.save(&Game::options_path());
+                        self.native_chat(&format!("{name}: 100%"));
+                    }
+                    None => self.native_chat(&format!("No player matches {player}.")),
+                },
+                super::VoiceCmd::Mute => {
+                    self.belumi_voice.muted = !self.belumi_voice.muted;
+                    let text = if self.belumi_voice.muted { "Microphone muted." } else { "Microphone on." };
+                    self.native_chat(text);
+                }
+                super::VoiceCmd::Deafen => self.voice_toggle_deafen(),
+            }
+        }
+
+        fn voice_find_player(&self, text: &str) -> Option<(String, u128)> {
+            let wanted = text.to_lowercase();
+            let r = self.remote.as_ref()?;
+            let mut all: Vec<(String, u128)> = r.tab_players.iter().map(|(u, p)| (p.name.clone(), *u)).collect();
+            all.sort_by_key(|(n, _)| n.to_lowercase());
+            all.iter()
+                .find(|(n, _)| n.to_lowercase() == wanted)
+                .or_else(|| all.iter().find(|(n, _)| n.to_lowercase().starts_with(&wanted)))
+                .cloned()
+        }
+
+        pub(in crate::game) fn belumi_voice_draw_badges(&mut self, batch: &mut horizon_client::hud::HudBatch) {
+            if !self.settings.belumi.voice || self.belumi_voice.roster.players.is_empty() || !self.camera_type.first_person() {
+                return;
+            }
+            let (Some(p), Some(r)) = (self.player.as_ref(), self.remote.as_ref()) else {
+                return;
+            };
+            let eye = [p.position.x, p.position.y + f64::from(p.dimensions.eye_height), p.position.z];
+            let cam = crate::game::belumi_maps::Camera {
+                eye,
+                yaw: self.yaw,
+                pitch: self.pitch,
+                vertical_fov: self.settings.fov.clamp(1.0, 170.0),
+                aspect: batch.width / batch.height.max(1.0),
+            };
+            let me = self.voice_me();
+            let mut marks: Vec<(f32, f32, &'static str, u32)> = Vec::new();
+            for (uuid, pos) in r.player_positions() {
+                if uuid == me {
+                    continue;
+                }
+                let Some(badge) = self.belumi_voice.roster.players.get(&uuid).and_then(|s| s.badge()) else {
+                    continue;
+                };
+                let Some((u, v)) = crate::game::belumi_maps::project(&cam, [pos[0], pos[1] + 2.75, pos[2]]) else {
+                    continue;
+                };
+                let (label, color) = match badge {
+                    Badge::Disconnected => ("NO VOICE", 0xFF70_7070),
+                    Badge::FullMuted => ("DEAF", 0xFFCC_3333),
+                    Badge::Muted => ("MUTED", 0xFFDD_8822),
+                };
+                marks.push((u * batch.width, v * batch.height, label, color));
+            }
+            for (x, y, label, color) in marks {
+                let w = self.native_text_width(label) + 4.0;
+                self.native_fill(batch, [x - w / 2.0, y - 5.0, w, 10.0], color);
+                self.native_text(batch, label, [x - w / 2.0 + 2.0, y - 4.0], 0x00FF_FFFF, false);
             }
         }
 
@@ -352,7 +725,9 @@ mod stub {
         pub(in crate::game) fn belumi_voice_channel(&self, _channel: &str) -> bool {
             false
         }
-        pub(in crate::game) fn belumi_voice_payload(&mut self, _data: &[u8]) {}
+        pub(in crate::game) fn belumi_voice_payload(&mut self, _channel: &str, _data: &[u8]) {}
+        pub(in crate::game) fn belumi_voice_command(&mut self, _command: &str, _ran: &mut bool) {}
+        pub(in crate::game) fn belumi_voice_draw_badges(&mut self, _batch: &mut horizon_client::hud::HudBatch) {}
         pub(in crate::game) fn belumi_voice_joined(&mut self) {
             if self.settings.belumi.voice && !self.belumi_voice.warned {
                 self.belumi_voice.warned = true;
@@ -376,6 +751,31 @@ mod stub {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn voice_commands_parse_with_quotes_and_defaults() {
+        use super::VoiceCmd::*;
+        assert_eq!(parse_voice_command("voice groups"), Some(Groups));
+        assert_eq!(parse_voice_command("vc"), Some(Help));
+        assert_eq!(parse_voice_command("waypoint add"), None);
+        assert_eq!(
+            parse_voice_command("voice group create \"My team\" secret"),
+            Some(Create { name: "My team".into(), password: Some("secret".into()) })
+        );
+        assert_eq!(
+            parse_voice_command("voice group join 2"),
+            Some(Join { target: "2".into(), password: None })
+        );
+        assert_eq!(parse_voice_command("voice group leave"), Some(Leave));
+        assert_eq!(parse_voice_command("voice group create"), None);
+        assert_eq!(
+            parse_voice_command("voice volume Alex 150%"),
+            Some(Volume { player: "Alex".into(), percent: Some(150) })
+        );
+        assert_eq!(parse_voice_command("voice volume Alex 999"), None);
+        assert_eq!(parse_voice_command("voice volume Alex reset"), Some(VolumeReset("Alex".into())));
+        assert_eq!(parse_voice_command("VOICE deafen"), Some(Deafen));
+    }
 
     #[test]
     fn the_speaking_line_lists_up_to_three_names() {

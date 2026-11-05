@@ -11,6 +11,7 @@ pub const PLUGINS_DIR: &str = "belumi-plugins";
 pub const FREECAM_KEY: &str = "belumi.freecam";
 pub const VOICE_KEY: &str = "belumi.voice";
 pub const VOICE_MUTE_KEY: &str = "belumi.voice_mute";
+pub const VOICE_DEAFEN_KEY: &str = "belumi.voice_deafen";
 pub const VOICE_THRESHOLDS: [f32; 4] = [-60.0, -50.0, -40.0, -30.0];
 pub const VOICE_MIC_GAINS: [f32; 4] = [0.5, 1.0, 1.5, 2.0];
 pub const VOICE_VOLUMES: [f32; 4] = [0.5, 1.0, 1.5, 2.0];
@@ -68,6 +69,7 @@ pub struct Belumi {
     pub voice_mode: u8,
     pub voice_key: String,
     pub voice_mute_key: String,
+    pub voice_deafen_key: String,
     pub voice_threshold: u8,
     pub voice_mic: u8,
     pub voice_volume: u8,
@@ -77,6 +79,7 @@ pub struct Belumi {
     pub freecam: bool,
     pub freecam_key: String,
     pub freecam_speed: u8,
+    pub voice_player_volumes: std::collections::BTreeMap<String, u16>,
 }
 impl Default for Belumi {
     fn default() -> Self {
@@ -120,6 +123,7 @@ impl Default for Belumi {
             voice_mode: 0,
             voice_key: "key.keyboard.v".into(),
             voice_mute_key: "key.keyboard.k".into(),
+            voice_deafen_key: "key.keyboard.j".into(),
             voice_threshold: 1,
             voice_mic: 1,
             voice_volume: 1,
@@ -129,6 +133,7 @@ impl Default for Belumi {
             freecam: false,
             freecam_key: "key.keyboard.f9".into(),
             freecam_speed: 1,
+            voice_player_volumes: Default::default(),
         }
     }
 }
@@ -200,6 +205,11 @@ impl Belumi {
     pub fn voice_mic_gain(&self) -> f32 {
         VOICE_MIC_GAINS[usize::from(self.voice_mic).min(VOICE_MIC_GAINS.len() - 1)]
     }
+    pub fn player_gain(&self, uuid: &str) -> f32 {
+        self.voice_player_volumes
+            .get(uuid)
+            .map_or(1.0, |p| f32::from(*p) / 100.0)
+    }
     pub fn voice_volume_gain(&self) -> f32 {
         VOICE_VOLUMES[usize::from(self.voice_volume).min(VOICE_VOLUMES.len() - 1)]
     }
@@ -270,6 +280,7 @@ pub enum Item {
     VoiceMode,
     VoiceKey,
     VoiceMuteKey,
+    VoiceDeafenKey,
     VoiceThreshold,
     VoiceMic,
     VoiceVolume,
@@ -449,6 +460,7 @@ const SPECS: &[Spec] = &[
     choice!(VoiceMode, "Microphone mode", "Push to talk sends only while the key is held; voice activation opens on sound.", Some(Item::Voice), VOICE_MODES, voice_mode),
     key!(VoiceKey, "Push-to-talk key", Some(Item::Voice), VOICE_KEY, voice_key),
     key!(VoiceMuteKey, "Mute key", Some(Item::Voice), VOICE_MUTE_KEY, voice_mute_key),
+    key!(VoiceDeafenKey, "Deafen key", Some(Item::Voice), VOICE_DEAFEN_KEY, voice_deafen_key),
     choice!(VoiceThreshold, "Activation level", "How loud you must be to open the microphone in voice activation mode.", Some(Item::Voice), VOICE_THRESHOLD_LABELS, voice_threshold),
     choice!(VoiceMic, "Microphone volume", "Boosts or lowers what you send.", Some(Item::Voice), VOICE_GAIN_LABELS, voice_mic),
     choice!(VoiceVolume, "Voice volume", "How loud other players sound.", Some(Item::Voice), VOICE_GAIN_LABELS, voice_volume),
@@ -480,7 +492,7 @@ pub fn rows() -> Vec<Result<Item, &'static str>> {
         ("Maps", &[Minimap, MinimapCorner, MinimapSize, MinimapZoom, MinimapRotate, MinimapRound, MapEntities, Worldmap, WorldmapKey]),
         ("Waypoints", &[Waypoints, WaypointKey, WaypointList, WaypointLabels]),
         ("Screen effects", &[Effects, FxVignette, FxSaturation, FxContrast, FxWarmth, FxSharpen, FxGrain]),
-        ("Voice chat", &[Voice, VoiceMode, VoiceKey, VoiceMuteKey, VoiceThreshold, VoiceMic, VoiceVolume, VoiceDevice]),
+        ("Voice chat", &[Voice, VoiceMode, VoiceKey, VoiceMuteKey, VoiceDeafenKey, VoiceThreshold, VoiceMic, VoiceVolume, VoiceDevice]),
         ("Plugins", &[Plugins, PluginCorner]),
         ("Camera", &[Freecam, FreecamKey, FreecamSpeed]),
         ("Debug", &[Inspector, InspectorKey, InspectorCorner]),
