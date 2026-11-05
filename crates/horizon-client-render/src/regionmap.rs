@@ -158,6 +158,33 @@ impl RegionMap {
         }
     }
 
+    /// Read every region file of this map into memory (an export wants all of it).
+    pub fn load_all(&mut self) {
+        let names: Vec<(i32, i32)> = fs::read_dir(&self.dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| {
+                let name = e.file_name().into_string().ok()?;
+                let rest = name.strip_prefix("r.")?.strip_suffix(".bin")?;
+                let (x, z) = rest.split_once('.')?;
+                Some((x.parse().ok()?, z.parse().ok()?))
+            })
+            .collect();
+        for region in names {
+            self.load(region);
+        }
+    }
+
+    /// The chunk range `(x0, z0, x1, z1)` of everything held, if anything is.
+    pub fn bounds(&self) -> Option<(i32, i32, i32, i32)> {
+        let mut it = self.regions.values().flat_map(|r| r.tiles.keys());
+        let first = it.next()?;
+        Some(it.fold((first.0, first.1, first.0, first.1), |b, k| {
+            (b.0.min(k.0), b.1.min(k.1), b.2.max(k.0), b.3.max(k.1))
+        }))
+    }
+
     /// Take in scanned surface tiles; only a changed tile marks its region.
     pub fn absorb(&mut self, scanned: Vec<((i32, i32), Tile)>) {
         for (key, tile) in scanned {
@@ -296,6 +323,19 @@ mod tests {
         assert_eq!(tiles[0].1.color[0], 3);
         assert_eq!(tiles[1].0, (-1 * 32 + 31, 31));
         assert!(decode_region(b"nope", (0, 0)).is_empty());
+    }
+
+    #[test]
+    fn bounds_and_load_all_cover_everything_saved() {
+        let dir = Temp::new("bounds");
+        let mut map = RegionMap::open(dir.path().to_path_buf());
+        assert_eq!(map.bounds(), None);
+        map.absorb(vec![((-3, 5), tile(3, 1)), ((70, -40), tile(4, 2))]);
+        map.save_now();
+        let mut again = RegionMap::open(dir.path().to_path_buf());
+        assert_eq!(again.bounds(), None);
+        again.load_all();
+        assert_eq!(again.bounds(), Some((-3, -40, 70, 5)));
     }
 
     #[test]

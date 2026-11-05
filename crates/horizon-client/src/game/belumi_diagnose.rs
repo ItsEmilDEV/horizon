@@ -19,6 +19,10 @@ impl Game<'_> {
         let Some(dir) = self.options.diagnose_shots.clone() else {
             return;
         };
+        // A run nobody watches must not stop when the window has no focus.
+        if self.screen == Screen::Paused {
+            self.screen = Screen::Playing;
+        }
         let lit = self.player.as_ref().is_some_and(|p| {
             self.streaming.is_lit(
                 (p.position.x.floor() as i32) >> 4,

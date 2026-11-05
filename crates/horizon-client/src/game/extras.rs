@@ -73,6 +73,7 @@ impl Game<'_> {
         }
         self.update_minimap();
         self.belumi_diagnose_frame();
+        self.belumi_death_waypoint();
         // For mods (`render.frame-stats`, `native_frame_rate`).
         let now = self.extras_now();
         self.extras.fps.record(now, elapsed.as_secs_f32() * 1000.0);
@@ -249,6 +250,7 @@ impl Game<'_> {
             z: view.z,
             bpp: view.blocks_per_pixel,
             cave,
+            overlay: self.belumi_map_overlay(),
         });
         let Some(canvas) = self.extras.engine.take_canvas() else {
             return;

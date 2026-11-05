@@ -76,12 +76,15 @@ pub struct Belumi {
     pub voice_device: String,
     pub quality: u8,
     pub ui_style: u8,
+    pub map_grid: bool,
+    pub map_slime: bool,
     pub plugins: bool,
     pub plugin_corner: String,
     pub freecam: bool,
     pub freecam_key: String,
     pub freecam_speed: u8,
     pub voice_player_volumes: std::collections::BTreeMap<String, u16>,
+    pub map_seeds: std::collections::BTreeMap<String, i64>,
 }
 impl Default for Belumi {
     fn default() -> Self {
@@ -132,12 +135,15 @@ impl Default for Belumi {
             voice_device: String::new(),
             quality: 0,
             ui_style: 0,
+            map_grid: false,
+            map_slime: false,
             plugins: false,
             plugin_corner: Corner::BottomRight.name().into(),
             freecam: false,
             freecam_key: "key.keyboard.f9".into(),
             freecam_speed: 1,
             voice_player_volumes: Default::default(),
+            map_seeds: Default::default(),
         }
     }
 }
@@ -273,6 +279,8 @@ pub enum Item {
     WaypointList,
     WaypointLabels,
     MapEntities,
+    MapGrid,
+    MapSlime,
     Worldmap,
     WorldmapKey,
     Effects,
@@ -457,6 +465,8 @@ const SPECS: &[Spec] = &[
     switch!(WaypointList, "Nearest list", "Lists the nearest waypoints with distance and direction.", Some(Item::Waypoints), waypoint_list),
     switch!(WaypointLabels, "Map markers", "Marks waypoints on the minimap and the world map.", Some(Item::Waypoints), waypoint_labels),
     switch!(MapEntities, "Entities on maps", "Shows players, hostile mobs and animals as coloured dots on the minimap and the world map.", Some(Item::Minimap), map_entities),
+    switch!(MapGrid, "Chunk borders", "Draws the borders of chunks (16 x 16 blocks) on the maps when zoomed in.", Some(Item::Minimap), map_grid),
+    switch!(MapSlime, "Slime chunks", "Tints the chunks slimes spawn in. Needs the world seed: singleplayer knows it, on a server type /map seed NUMBER.", Some(Item::Minimap), map_slime),
     switch!(Worldmap, "World map", "Remembers explored terrain and shows it in a full-screen overlay.", None, worldmap),
     key!(WorldmapKey, "World map key", Some(Item::Worldmap), WORLDMAP_KEY, worldmap_key),
     switch!(Effects, "Screen effects", "Colour grading, sharpening, vignette and film grain, applied in the pass that already draws the screen (about 0.1 ms).", None, effects),
@@ -502,7 +512,7 @@ pub fn rows() -> Vec<Result<Item, &'static str>> {
         ("Look and quality", &[UiStyle, Quality]),
         ("Heads-up display", &[Hud, HudCorner, HudCoords, HudFps, HudPing, HudDirection, HudSpeed]),
         ("Zoom", &[Zoom, ZoomKey, ZoomLevel, ZoomSmooth, ZoomScroll]),
-        ("Maps", &[Minimap, MinimapCorner, MinimapSize, MinimapZoom, MinimapRotate, MinimapRound, MapEntities, Worldmap, WorldmapKey]),
+        ("Maps", &[Minimap, MinimapCorner, MinimapSize, MinimapZoom, MinimapRotate, MinimapRound, MapEntities, MapGrid, MapSlime, Worldmap, WorldmapKey]),
         ("Waypoints", &[Waypoints, WaypointKey, WaypointList, WaypointLabels]),
         ("Screen effects", &[Effects, FxVignette, FxSaturation, FxContrast, FxWarmth, FxSharpen, FxGrain]),
         ("Voice chat", &[Voice, VoiceMode, VoiceKey, VoiceMuteKey, VoiceDeafenKey, VoiceThreshold, VoiceMic, VoiceVolume, VoiceDevice]),

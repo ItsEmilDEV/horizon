@@ -372,6 +372,7 @@ impl Game<'_> {
         self.belumi_plugins_command(command, ran);
         self.belumi_command(command, ran);
         self.belumi_voice_command(command, ran);
+        self.belumi_map_command(command, ran);
     }
     /// The zoom a native mod asks for, applied while playing (the spyglass's
     /// own view wins): set `zoom` when it is none yet.

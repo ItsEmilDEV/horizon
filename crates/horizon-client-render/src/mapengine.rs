@@ -60,6 +60,7 @@ enum Job {
         cz: f64,
         bpp: f32,
         cave: bool,
+        overlay: Overlay,
         tiles: FxHashMap<(i32, i32), Arc<Tile>>,
     },
 }
@@ -73,6 +74,43 @@ enum Done {
         head: i32,
     },
     Painted(Canvas),
+}
+
+/// What is drawn over the terrain: chunk borders and the chunks slimes spawn in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Overlay {
+    pub grid: bool,
+    pub slime_seed: Option<i64>,
+}
+
+/// Java's `Random.next(bits)` on a 48-bit seed.
+fn java_next(seed: &mut i64, bits: u32) -> i32 {
+    *seed = (seed.wrapping_mul(0x5_DEEC_E66D).wrapping_add(0xB)) & ((1i64 << 48) - 1);
+    (*seed >> (48 - bits)) as i32
+}
+
+/// Whether slimes spawn in chunk (`cx`, `cz`) of the world with `seed` (the game's own rule).
+pub fn is_slime_chunk(seed: i64, cx: i32, cz: i32) -> bool {
+    let mixed = seed
+        .wrapping_add(i64::from(cx.wrapping_mul(cx).wrapping_mul(0x4c1906)))
+        .wrapping_add(i64::from(cx.wrapping_mul(0x5ac0db)))
+        .wrapping_add(i64::from(cz.wrapping_mul(cz)).wrapping_mul(0x4307a7))
+        .wrapping_add(i64::from(cz.wrapping_mul(0x5f24f)))
+        ^ 0x3ad8_025f;
+    let mut state = (mixed ^ 0x5_DEEC_E66D) & ((1i64 << 48) - 1);
+    loop {
+        let bits = java_next(&mut state, 31);
+        let value = bits % 10;
+        if bits.wrapping_sub(value).wrapping_add(9) >= 0 {
+            return value == 0;
+        }
+    }
+}
+
+fn blend(px: &mut [u8], color: [u8; 3], alpha: f32) {
+    for (c, t) in px.iter_mut().zip(color) {
+        *c = (f32::from(*c) * (1.0 - alpha) + f32::from(t) * alpha) as u8;
+    }
 }
 
 /// A painted canvas: its centre in the world, the blocks one texel covers, and RGBA.
@@ -98,6 +136,7 @@ pub struct Want {
     pub z: f64,
     pub bpp: f32,
     pub cave: bool,
+    pub overlay: Overlay,
 }
 
 type Shared<T> = Arc<Mutex<T>>;
@@ -342,6 +381,7 @@ impl MapEngine {
     pub fn canvas_stale(shown: &Want, want: &Want) -> bool {
         want.bpp != shown.bpp
             || want.cave != shown.cave
+            || want.overlay != shown.overlay
             || (want.x - shown.x).abs() > RECENTER * f64::from(want.bpp)
             || (want.z - shown.z).abs() > RECENTER * f64::from(want.bpp)
     }
@@ -388,6 +428,7 @@ impl MapEngine {
             cz,
             bpp: want.bpp,
             cave: want.cave,
+            overlay: want.overlay,
             tiles,
         });
     }
@@ -464,10 +505,11 @@ fn worker(
                 cz,
                 bpp,
                 cave,
+                overlay,
                 tiles,
             } => {
                 let mut image = Vec::new();
-                paint_canvas(&mut image, cx, cz, f64::from(bpp), &tiles);
+                paint_sized(&mut image, CANVAS, cx, cz, f64::from(bpp), &tiles, overlay);
                 Done::Painted(Canvas {
                     image,
                     cx,
@@ -525,7 +567,7 @@ pub fn paint_canvas(
     bpp: f64,
     tiles: &FxHashMap<(i32, i32), Arc<Tile>>,
 ) {
-    paint_sized(image, CANVAS, cx, cz, bpp, tiles);
+    paint_sized(image, CANVAS, cx, cz, bpp, tiles, Overlay::default());
 }
 
 /// `paint_canvas` for a canvas `size` texels across.
@@ -536,9 +578,11 @@ pub fn paint_sized(
     cz: f64,
     bpp: f64,
     tiles: &FxHashMap<(i32, i32), Arc<Tile>>,
+    overlay: Overlay,
 ) {
     image.resize(size * size * 4, 0);
     let mut lookup = Lookup { tiles, last: None };
+    let mut slime_at: Option<((i32, i32), bool)> = None;
     let half = size as f64 / 2.0;
     for j in 0..size {
         let wz = cz + (j as f64 + 0.5 - half) * bpp;
@@ -560,6 +604,23 @@ pub fn paint_sized(
                 _ => UNKNOWN,
             };
             image[o..o + 4].copy_from_slice(&rgba);
+            if let Some(seed) = overlay.slime_seed {
+                let chunk = (x >> 4, z >> 4);
+                let slime = match slime_at {
+                    Some((c, s)) if c == chunk => s,
+                    _ => {
+                        let s = is_slime_chunk(seed, chunk.0, chunk.1);
+                        slime_at = Some((chunk, s));
+                        s
+                    }
+                };
+                if slime {
+                    blend(&mut image[o..o + 3], [60, 255, 90], 0.32);
+                }
+            }
+            if overlay.grid && bpp <= 2.0 && (x & 15 == 0 || z & 15 == 0) {
+                blend(&mut image[o..o + 3], [255, 255, 255], 0.22);
+            }
         }
     }
 }
@@ -574,6 +635,7 @@ struct PaintJob {
     cx: f64,
     cz: f64,
     bpp: f32,
+    overlay: Overlay,
     tiles: FxHashMap<(i32, i32), Arc<Tile>>,
 }
 pub struct Painted {
@@ -592,6 +654,7 @@ pub struct Painter {
     busy: bool,
     generation: u64,
     requested: Option<(f64, f64, f32)>,
+    overlay: Overlay,
     last: Instant,
     ready: Option<Painted>,
     shown: Option<(f64, f64, f32)>,
@@ -612,7 +675,7 @@ impl Painter {
             .spawn(move || {
                 while let Ok(job) = rx.recv() {
                     let mut image = Vec::new();
-                    paint_sized(&mut image, WORLD_CANVAS, job.cx, job.cz, f64::from(job.bpp), &job.tiles);
+                    paint_sized(&mut image, WORLD_CANVAS, job.cx, job.cz, f64::from(job.bpp), &job.tiles, job.overlay);
                     let done = Painted {
                         image,
                         cx: job.cx,
@@ -633,6 +696,7 @@ impl Painter {
             busy: false,
             generation: 0,
             requested: None,
+            overlay: Overlay::default(),
             last: Instant::now(),
             ready: None,
             shown: None,
@@ -671,6 +735,7 @@ impl Painter {
         z: f64,
         bpp: f32,
         changed: bool,
+        overlay: Overlay,
         tiles: impl FnOnce((f64, f64, f64, f64)) -> FxHashMap<(i32, i32), Arc<Tile>>,
     ) {
         self.drain();
@@ -679,7 +744,11 @@ impl Painter {
         }
         let stale = match self.requested {
             None => true,
-            Some(r) => Self::stale(r, x, z, bpp) || (changed && self.last.elapsed() >= REPAINT),
+            Some(r) => {
+                Self::stale(r, x, z, bpp)
+                    || overlay != self.overlay
+                    || (changed && self.last.elapsed() >= REPAINT)
+            }
         };
         if !stale {
             return;
@@ -691,12 +760,14 @@ impl Painter {
         self.busy = true;
         self.last = Instant::now();
         self.requested = Some((cx, cz, bpp));
+        self.overlay = overlay;
         if let Some(tx) = &self.jobs {
             let _ = tx.send(PaintJob {
                 generation: self.generation,
                 cx,
                 cz,
                 bpp,
+                overlay,
                 tiles,
             });
         }
@@ -754,6 +825,45 @@ mod tests {
     }
 
     #[test]
+    fn the_java_random_matches_its_known_first_value() {
+        let mut seed = (42i64 ^ 0x5_DEEC_E66D) & ((1i64 << 48) - 1);
+        assert_eq!(java_next(&mut seed, 32), -1_170_105_035);
+    }
+
+    #[test]
+    fn slime_chunks_are_about_one_in_ten_and_stable() {
+        let count = (-50..50)
+            .flat_map(|x| (-50..50).map(move |z| (x, z)))
+            .filter(|&(x, z)| is_slime_chunk(12345, x, z))
+            .count();
+        assert!((800..1200).contains(&count), "{count}");
+        assert_eq!(is_slime_chunk(12345, 7, -3), is_slime_chunk(12345, 7, -3));
+        assert_ne!(
+            (0..40).map(|x| is_slime_chunk(1, x, 0)).collect::<Vec<_>>(),
+            (0..40).map(|x| is_slime_chunk(2, x, 0)).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn the_overlay_draws_chunk_borders_and_slime_tint_and_changes_what_is_stale() {
+        let mut tiles = FxHashMap::default();
+        for x in -4..4 {
+            for z in -4..4 {
+                tiles.insert((x, z), tile(1, 64));
+            }
+        }
+        let (mut plain, mut grid) = (Vec::new(), Vec::new());
+        paint_sized(&mut plain, CANVAS, 0.0, 0.0, 1.0, &tiles, Overlay::default());
+        paint_sized(&mut grid, CANVAS, 0.0, 0.0, 1.0, &tiles, Overlay { grid: true, slime_seed: None });
+        let border = (CANVAS / 2 * CANVAS + CANVAS / 2) * 4;
+        assert_ne!(&plain[border..border + 3], &grid[border..border + 3]);
+        let inside = border + (5 * CANVAS + 5) * 4;
+        assert_eq!(&plain[inside..inside + 3], &grid[inside..inside + 3]);
+        let shown = Want { x: 0.0, z: 0.0, bpp: 1.0, cave: false, overlay: Overlay::default() };
+        assert!(MapEngine::canvas_stale(&shown, &Want { overlay: Overlay { grid: true, slime_seed: None }, ..shown }));
+    }
+
+    #[test]
     fn real_colours_shade_by_slope_and_water_depth() {
         let flat = shaded(0x808080, 1, 64, Some(64), 0);
         let up = shaded(0x808080, 1, 66, Some(64), 0);
@@ -795,7 +905,7 @@ mod tests {
     fn the_painter_paints_once_and_waits_for_a_reason_to_paint_again() {
         let mut painter = Painter::new();
         let mut asked = 0;
-        painter.want(5.0, 5.0, 1.0, false, |_| {
+        painter.want(5.0, 5.0, 1.0, false, Overlay::default(), |_| {
             asked += 1;
             FxHashMap::default()
         });
@@ -810,7 +920,7 @@ mod tests {
         let got = got.expect("a painted world canvas");
         assert_eq!(got.image.len(), WORLD_CANVAS * WORLD_CANVAS * 4);
         assert_eq!((got.cx, got.cz), (0.0, 0.0));
-        painter.want(5.0, 5.0, 1.0, false, |_| {
+        painter.want(5.0, 5.0, 1.0, false, Overlay::default(), |_| {
             asked += 1;
             FxHashMap::default()
         });
@@ -820,7 +930,7 @@ mod tests {
 
     #[test]
     fn the_canvas_stays_until_the_player_nears_its_edge_or_the_zoom_changes() {
-        let shown = Want { x: 0.0, z: 0.0, bpp: 1.0, cave: false };
+        let shown = Want { x: 0.0, z: 0.0, bpp: 1.0, cave: false, overlay: Overlay::default() };
         let near = Want { x: 15.0, z: -10.0, ..shown };
         assert!(!MapEngine::canvas_stale(&shown, &near));
         let far = Want { x: 25.0, ..shown };
@@ -834,7 +944,7 @@ mod tests {
     #[test]
     fn a_worker_paints_a_canvas_and_the_engine_hands_it_over_once() {
         let mut engine = MapEngine::new();
-        engine.want_canvas(Want { x: 3.0, z: 5.0, bpp: 1.0, cave: false });
+        engine.want_canvas(Want { x: 3.0, z: 5.0, bpp: 1.0, cave: false, overlay: Overlay::default() });
         let mut canvas = None;
         for _ in 0..200 {
             canvas = engine.take_canvas();
@@ -848,7 +958,7 @@ mod tests {
         assert_eq!((canvas.cx, canvas.cz), (0.0, 8.0));
         assert!(engine.take_canvas().is_none());
         assert_eq!(engine.shown(), Some((0.0, 8.0, 1.0, false)));
-        engine.want_canvas(Want { x: 3.0, z: 5.0, bpp: 1.0, cave: false });
+        engine.want_canvas(Want { x: 3.0, z: 5.0, bpp: 1.0, cave: false, overlay: Overlay::default() });
         assert!(engine.take_canvas().is_none());
     }
 }

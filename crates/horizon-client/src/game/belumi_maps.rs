@@ -1,7 +1,7 @@
 use super::{Dim, Game, native_hooks::NativeMinimap};
 use horizon_client::{
     hud::{HudBatch, WORLDMAP_SIZE, WORLDMAP_SPRITE, rgba},
-    mapengine::{Painter, WORLD_WINDOW},
+    mapengine::{Overlay, Painter, WORLD_WINDOW, paint_sized},
     regionmap::{REGION, RegionMap},
     waypoints::{self, Waypoint, Waypoints},
 };
@@ -23,6 +23,7 @@ pub(super) struct MapState {
     since_save: f32,
     pub(super) open: bool,
     zoom: usize,
+    died: bool,
 }
 impl Default for MapState {
     fn default() -> Self {
@@ -37,6 +38,7 @@ impl Default for MapState {
             since_save: 0.0,
             open: false,
             zoom: DEFAULT_ZOOM,
+            died: false,
         }
     }
 }
@@ -123,6 +125,126 @@ impl Game<'_> {
 
     pub(super) fn belumi_connecting(&mut self, address: &str) {
         self.belumi_maps.server = address.to_owned();
+    }
+
+    /// The chunk borders and slime chunks the maps draw over the terrain.
+    pub(super) fn belumi_map_overlay(&self) -> Overlay {
+        let cfg = &self.settings.belumi;
+        Overlay {
+            grid: cfg.map_grid,
+            slime_seed: cfg.map_slime.then(|| self.belumi_world_seed()).flatten(),
+        }
+    }
+
+    fn belumi_world_seed(&self) -> Option<i64> {
+        let scope = self.belumi_scope();
+        self.settings
+            .belumi
+            .map_seeds
+            .get(&scope)
+            .copied()
+            .or_else(|| scope.starts_with("world:").then_some(self.level.seed))
+    }
+
+    /// `/map seed N | grid | slime | export`: the map options and a PNG of everything explored.
+    pub(super) fn belumi_map_command(&mut self, command: &str, ran: &mut bool) {
+        if *ran {
+            return;
+        }
+        let mut words = command.split_whitespace();
+        if !words.next().is_some_and(|w| w.eq_ignore_ascii_case("map")) {
+            return;
+        }
+        *ran = true;
+        let sub = words.next().map(str::to_ascii_lowercase);
+        let reply = match sub.as_deref() {
+            Some("seed") => match words.next().and_then(|n| n.parse::<i64>().ok()) {
+                Some(seed) => {
+                    let scope = self.belumi_scope();
+                    self.settings.belumi.map_seeds.insert(scope, seed);
+                    self.settings.save(&Self::options_path());
+                    self.belumi_maps.painter.reset();
+                    format!("Seed {seed} saved for slime chunks.")
+                }
+                None => match self.belumi_world_seed() {
+                    Some(seed) => format!("Seed {seed}. Set another with /map seed NUMBER."),
+                    None => "No seed known here: type /map seed NUMBER.".to_owned(),
+                },
+            },
+            Some("grid") => {
+                self.settings.belumi.map_grid = !self.settings.belumi.map_grid;
+                self.settings.save(&Self::options_path());
+                format!("Chunk borders {}.", if self.settings.belumi.map_grid { "on" } else { "off" })
+            }
+            Some("slime") => {
+                self.settings.belumi.map_slime = !self.settings.belumi.map_slime;
+                self.settings.save(&Self::options_path());
+                match (self.settings.belumi.map_slime, self.belumi_world_seed()) {
+                    (true, Some(_)) => "Slime chunks on.".to_owned(),
+                    (true, None) => "Slime chunks on, but the seed is unknown: type /map seed NUMBER.".to_owned(),
+                    (false, _) => "Slime chunks off.".to_owned(),
+                }
+            }
+            Some("export") => self.belumi_export_map(),
+            _ => "/map seed NUMBER | grid | slime | export".to_owned(),
+        };
+        self.native_chat(&reply);
+    }
+
+    fn belumi_export_map(&mut self) -> String {
+        let Some(regions) = self.belumi_maps.regions.as_mut() else {
+            return "Nothing explored yet.".to_owned();
+        };
+        regions.load_all();
+        let Some((x0, z0, x1, z1)) = regions.bounds() else {
+            return "Nothing explored yet.".to_owned();
+        };
+        let tiles = regions.snapshot(x0, z0, x1, z1);
+        let (w, h) = (f64::from((x1 - x0 + 1) * 16), f64::from((z1 - z0 + 1) * 16));
+        let span = w.max(h);
+        let bpp = (span / 4096.0).ceil().max(1.0);
+        let size = ((span / bpp).ceil() as usize).clamp(16, 4096);
+        let (cx, cz) = (f64::from(x0 * 16) + w / 2.0, f64::from(z0 * 16) + h / 2.0);
+        let mut image = Vec::new();
+        paint_sized(&mut image, size, cx, cz, bpp, &tiles, self.belumi_map_overlay());
+        let dir = Self::belumi_dir().join("map-exports");
+        let _ = std::fs::create_dir_all(&dir);
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let path = dir.join(format!("{}-{}-{stamp}.png", safe_name(&self.belumi_scope()), self.dim.id()));
+        let written = std::fs::File::create(&path).ok().and_then(|f| {
+            let mut enc = png::Encoder::new(std::io::BufWriter::new(f), size as u32, size as u32);
+            enc.set_color(png::ColorType::Rgba);
+            enc.set_depth(png::BitDepth::Eight);
+            enc.write_header().ok()?.write_image_data(&image).ok()
+        });
+        match written {
+            Some(()) => format!("Saved {} ({size} x {size}, {bpp} block(s) per pixel).", path.display()),
+            None => "Could not write the map image.".to_owned(),
+        }
+    }
+
+    /// A waypoint where the player died, replacing the last one.
+    pub(super) fn belumi_death_waypoint(&mut self) {
+        let dead = self.screen == super::Screen::Dead;
+        if !dead {
+            self.belumi_maps.died = false;
+            return;
+        }
+        if self.belumi_maps.died || !self.settings.belumi.waypoints {
+            return;
+        }
+        self.belumi_maps.died = true;
+        let Some(p) = self.native_player() else {
+            return;
+        };
+        let scope = self.belumi_scope();
+        let at = [p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32];
+        let store = self.belumi_waypoint_store();
+        store.remove(&scope, "Death");
+        let _ = store.add(&scope, p.dimension, "Death", at);
+        self.belumi_save_waypoints();
     }
 
     pub(super) fn belumi_maps_clear_server(&mut self) {
@@ -467,8 +589,9 @@ impl Game<'_> {
             .regions
             .as_mut()
             .is_some_and(|r| r.take_changed());
+        let overlay = self.belumi_map_overlay();
         if let Some(regions) = self.belumi_maps.regions.as_mut() {
-            self.belumi_maps.painter.want(mx, mz, bpp, changed, |(x0, z0, x1, z1)| {
+            self.belumi_maps.painter.want(mx, mz, bpp, changed, overlay, |(x0, z0, x1, z1)| {
                 regions.snapshot(
                     (x0.floor() as i32) >> 4,
                     (z0.floor() as i32) >> 4,
