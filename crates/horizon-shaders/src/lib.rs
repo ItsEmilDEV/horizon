@@ -24,6 +24,7 @@ mod options;
 mod pack;
 mod post;
 mod preprocess;
+mod profiles;
 mod properties;
 mod translate;
 
@@ -42,6 +43,7 @@ pub use post::{
     dimension_folder, load_post,
 };
 pub use preprocess::{Diagnostic, Origin, Preprocessed, preprocess};
+pub use profiles::{MARKER, may_replace, options_file, profile_options};
 pub use properties::{Entry, Note, Properties};
 pub use translate::{
     AlphaTest, DRAW_UNIFORMS, Error, GbuffersInputs, Interface, Program, Sampler, Target, Uniform,

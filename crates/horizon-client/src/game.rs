@@ -2116,6 +2116,9 @@ struct Game<'a> {
     panel: native_panel::Panel,
     /// Horizon's own shader pack, while one is picked (`game/native_shaders.rs`).
     native_shaders: native_shaders::NativeShaders,
+    /// The quality step applied to the pack, and the pack the shaders-off step put away.
+    belumi_quality: Option<u8>,
+    belumi_quality_pack: String,
     /// The native lifecycle bookkeeping.
     native_lifecycle: native_lifecycle::NativeLifecycle,
     /// Meshed sections waiting for an upload budget (Horizon settings).
@@ -15174,6 +15177,8 @@ impl<'a> Game<'a> {
             recipe_tables: Default::default(),
             panel: Default::default(),
             native_shaders: Default::default(),
+            belumi_quality: None,
+            belumi_quality_pack: String::new(),
             native_lifecycle: Default::default(),
             sky_darken_memo: Default::default(),
             persist: Default::default(),

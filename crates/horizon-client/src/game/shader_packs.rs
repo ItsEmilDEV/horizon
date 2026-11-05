@@ -37,6 +37,7 @@ impl Game<'_> {
     /// inputs to the pack's uniforms.
     pub(super) fn shader_pack_inputs(&mut self, camera: glam::DVec3, partial: f32) -> PackInputs {
         self.pick_default_shader_pack();
+        self.belumi_apply_quality();
         static DEV_PACK: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
         let dev = DEV_PACK.get_or_init(|| std::env::var("HORIZON_SHADER_PACK").ok());
         let picked = dev.as_deref().unwrap_or(&self.settings.horizon.shader_pack);
@@ -433,5 +434,79 @@ impl Game<'_> {
             self.settings.save(&Self::options_path());
             let _ = std::fs::write(&marker, "");
         }
+    }
+
+    /// The quality step in the Belumi settings: the pack's own profile as its options file (the
+    /// player's own file is never replaced), or the shaders turned off and back on.
+    fn belumi_apply_quality(&mut self) {
+        let want = self.settings.belumi.quality;
+        let first = self.belumi_quality.is_none();
+        if self.belumi_quality == Some(want) {
+            return;
+        }
+        self.belumi_quality = Some(want);
+        if first && want == 0 {
+            return;
+        }
+        if want == 5 {
+            if !self.settings.horizon.shader_pack.is_empty() {
+                self.belumi_quality_pack = std::mem::take(&mut self.settings.horizon.shader_pack);
+                self.settings.save(&Self::options_path());
+            }
+            return;
+        }
+        if self.settings.horizon.shader_pack.is_empty() && !self.belumi_quality_pack.is_empty() {
+            self.settings.horizon.shader_pack = std::mem::take(&mut self.belumi_quality_pack);
+            self.settings.save(&Self::options_path());
+        }
+        let name = self.settings.horizon.shader_pack.clone();
+        if name.is_empty() {
+            return;
+        }
+        let path = Self::shader_packs_dir().join(&name);
+        let mut file = path.as_os_str().to_owned();
+        file.push(".txt");
+        let file = std::path::PathBuf::from(file);
+        let existing = std::fs::read_to_string(&file).ok();
+        if !horizon_shaders::may_replace(existing.as_deref()) {
+            self.native_chat("Quality: the pack has your own options file; edit it by hand instead.");
+            return;
+        }
+        let Ok(pack) = Pack::open(&path) else {
+            return;
+        };
+        let level = match want {
+            1 => "HIGH",
+            2 => "MEDIUM",
+            3 | 4 => "LOW",
+            _ => "",
+        };
+        if level.is_empty() {
+            let _ = std::fs::remove_file(&file);
+        } else {
+            let mut option_macros = Macros::standard();
+            for (option, value) in horizon_shaders::option_macros(&pack) {
+                option_macros.define(option, value);
+            }
+            let text = pack.read_text("shaders.properties").unwrap_or_default();
+            let properties = Properties::parse(&text, &option_macros);
+            let mut options = horizon_shaders::profile_options(
+                &|key| properties.get(key).map(str::to_owned),
+                level,
+            );
+            if options.is_empty() {
+                self.native_chat("Quality: this pack has no quality profiles.");
+                return;
+            }
+            if want == 4 {
+                for (k, v) in [("shadowMapResolution", "512"), ("shadowDistance", "64.0"), ("REFLECTION", "0")] {
+                    options.retain(|(n, _)| n != k);
+                    options.push((k.to_owned(), v.to_owned()));
+                }
+            }
+            let label = horizon_client::belumi::QUALITY_LABELS[usize::from(want)];
+            let _ = std::fs::write(&file, horizon_shaders::options_file(label, &options));
+        }
+        self.native_shaders = super::native_shaders::NativeShaders::picking("\u{0}reload");
     }
 }

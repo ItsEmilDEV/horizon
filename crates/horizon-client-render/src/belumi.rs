@@ -74,6 +74,7 @@ pub struct Belumi {
     pub voice_mic: u8,
     pub voice_volume: u8,
     pub voice_device: String,
+    pub quality: u8,
     pub plugins: bool,
     pub plugin_corner: String,
     pub freecam: bool,
@@ -128,6 +129,7 @@ impl Default for Belumi {
             voice_mic: 1,
             voice_volume: 1,
             voice_device: String::new(),
+            quality: 0,
             plugins: false,
             plugin_corner: Corner::BottomRight.name().into(),
             freecam: false,
@@ -164,6 +166,7 @@ impl Belumi {
         b.fx_sharpen = b.fx_sharpen.min(FX_SHARPEN.len() as u8 - 1);
         b.fx_grain = b.fx_grain.min(FX_GRAIN.len() as u8 - 1);
         b.voice_mode = b.voice_mode.min(1);
+        b.quality = b.quality.min(QUALITY_LABELS.len() as u8 - 1);
         b.voice_threshold = b.voice_threshold.min(VOICE_THRESHOLDS.len() as u8 - 1);
         b.voice_mic = b.voice_mic.min(VOICE_MIC_GAINS.len() as u8 - 1);
         b.voice_volume = b.voice_volume.min(VOICE_VOLUMES.len() as u8 - 1);
@@ -285,6 +288,7 @@ pub enum Item {
     VoiceMic,
     VoiceVolume,
     VoiceDevice,
+    Quality,
     Plugins,
     PluginCorner,
     Freecam,
@@ -342,6 +346,7 @@ const FX_CONTRAST_LABELS: &[&str] = &["90%", "100%", "110%", "120%", "130%"];
 const FX_WARMTH_LABELS: &[&str] = &["Cold", "Cool", "Neutral", "Warm", "Hot"];
 const FX_SHARPEN_LABELS: &[&str] = &["Off", "Low", "Medium", "High"];
 const FX_GRAIN_LABELS: &[&str] = &["Off", "Low", "Medium", "High"];
+pub const QUALITY_LABELS: &[&str] = &["Default", "High", "Medium", "Low", "Minimal", "Shaders off"];
 const VOICE_MODES: &[&str] = &["Push to talk", "Voice activation"];
 const VOICE_THRESHOLD_LABELS: &[&str] = &["-60 dB (sensitive)", "-50 dB", "-40 dB", "-30 dB (loud only)"];
 const VOICE_GAIN_LABELS: &[&str] = &["50%", "100%", "150%", "200%"];
@@ -457,6 +462,7 @@ const SPECS: &[Spec] = &[
     choice!(FxSharpen, "Sharpen", "Brings out texture detail.", Some(Item::Effects), FX_SHARPEN_LABELS, fx_sharpen),
     choice!(FxGrain, "Film grain", "Fine moving noise.", Some(Item::Effects), FX_GRAIN_LABELS, fx_grain),
     switch!(Voice, "Voice chat", "Talks to other players on servers with the Simple Voice Chat mod (needs a build with voice support).", None, voice),
+    choice!(Quality, "Graphics quality", "Steps the shader pack down through its own quality profiles (High, Medium, Low), then Minimal, then turns shaders off. Default leaves the pack as it is.", None, QUALITY_LABELS, quality),
     choice!(VoiceMode, "Microphone mode", "Push to talk sends only while the key is held; voice activation opens on sound.", Some(Item::Voice), VOICE_MODES, voice_mode),
     key!(VoiceKey, "Push-to-talk key", Some(Item::Voice), VOICE_KEY, voice_key),
     key!(VoiceMuteKey, "Mute key", Some(Item::Voice), VOICE_MUTE_KEY, voice_mute_key),
@@ -487,6 +493,7 @@ const SPECS: &[Spec] = &[
 pub fn rows() -> Vec<Result<Item, &'static str>> {
     use Item::*;
     let sections: &[(&'static str, &[Item])] = &[
+        ("Graphics quality", &[Quality]),
         ("Heads-up display", &[Hud, HudCorner, HudCoords, HudFps, HudPing, HudDirection, HudSpeed]),
         ("Zoom", &[Zoom, ZoomKey, ZoomLevel, ZoomSmooth, ZoomScroll]),
         ("Maps", &[Minimap, MinimapCorner, MinimapSize, MinimapZoom, MinimapRotate, MinimapRound, MapEntities, Worldmap, WorldmapKey]),
