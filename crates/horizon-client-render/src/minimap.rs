@@ -89,6 +89,7 @@ impl Palette {
 pub trait Blocks {
     fn block_at(&self, x: i32, y: i32, z: i32) -> u32;
     fn bottom(&self) -> i32;
+    fn biome_at(&self, x: i32, y: i32, z: i32) -> u16;
     fn section_total(&self) -> usize;
     fn section_is_uniform(&self, s: usize, air: u32) -> bool;
 }
@@ -98,6 +99,9 @@ impl Blocks for Chunk {
     }
     fn bottom(&self) -> i32 {
         self.min_y()
+    }
+    fn biome_at(&self, x: i32, y: i32, z: i32) -> u16 {
+        self.biome(x, y, z)
     }
     fn section_total(&self) -> usize {
         self.sections.len()
@@ -144,6 +148,13 @@ impl Blocks for Snapshot {
     fn bottom(&self) -> i32 {
         self.min_y
     }
+    fn biome_at(&self, x: i32, y: i32, z: i32) -> u16 {
+        let qy = ((y - self.min_y) >> 2).clamp(0, self.sections.len() as i32 * 4 - 1);
+        self.sections.get((qy >> 2) as usize).map_or(0, |sec| {
+            sec.biomes
+                .get(((qy & 3) << 4 | ((z & 15) >> 2) << 2 | (x & 15) >> 2) as usize) as u16
+        })
+    }
     fn section_total(&self) -> usize {
         self.sections.len()
     }
@@ -159,6 +170,8 @@ pub struct Tile {
     pub height: [i16; 256],
     /// Water depth below the surface, for the map's water shading.
     pub depth: [u8; 256],
+    /// The column's real colour (0xRRGGBB, biome tint applied), 0 where the scan had none.
+    pub rgb: [u32; 256],
     revision: u64,
     layer: Layer,
     scanned: Instant,
@@ -175,6 +188,7 @@ impl Tile {
             color,
             height,
             depth,
+            rgb: [0; 256],
             revision: 0,
             layer: Layer::Surface,
             scanned: Instant::now(),
@@ -184,6 +198,7 @@ impl Tile {
 /// `MapItem.update` for one column: the first block with a map colour
 /// going down, the fluid's colour over a fluid unless the block is sturdy on
 /// top (`getCorrectStateForFluidBlock`), and the fluid's depth.
+#[cfg(test)]
 fn scan_column<C: Blocks>(
     chunk: &C,
     palette: &Palette,
@@ -192,16 +207,30 @@ fn scan_column<C: Blocks>(
     top: i32,
     layer: Layer,
 ) -> (u8, i16, u8) {
+    let (c, h, d, _) = scan_column_state(chunk, palette, x, z, top, layer);
+    (c, h, d)
+}
+/// `scan_column`, and the block state of the top block it found (0 for none).
+fn scan_column_state<C: Blocks>(
+    chunk: &C,
+    palette: &Palette,
+    x: i32,
+    z: i32,
+    top: i32,
+    layer: Layer,
+) -> (u8, i16, u8, u32) {
     let mut y = top;
     if let Layer::Below(head) = layer {
-        let (color, flags) = palette.get(chunk.block_at(x, head, z));
+        let id = chunk.block_at(x, head, z);
+        let (color, flags) = palette.get(id);
         if flags & AIR == 0 && color != 0 && flags & FLUID == 0 {
-            return (color | WALL, head as i16, 0);
+            return (color | WALL, head as i16, 0, id);
         }
     }
     let bottom = chunk.bottom();
     while y > bottom {
-        let (mut color, flags) = palette.get(chunk.block_at(x, y, z));
+        let id = chunk.block_at(x, y, z);
+        let (mut color, flags) = palette.get(id);
         if color == 0 {
             y -= 1;
             continue;
@@ -219,9 +248,9 @@ fn scan_column<C: Blocks>(
                 color = if fluid == 2 { LAVA } else { WATER };
             }
         }
-        return (color, y as i16, depth);
+        return (color, y as i16, depth, id);
     }
-    (0, bottom as i16, 0)
+    (0, bottom as i16, 0, 0)
 }
 /// The highest block of a chunk worth scanning from.
 fn top_of<C: Blocks>(chunk: &C, air: u32, layer: Layer) -> i32 {
@@ -234,23 +263,45 @@ fn top_of<C: Blocks>(chunk: &C, air: u32, layer: Layer) -> i32 {
         Layer::Below(head) => surface.min(head),
     }
 }
+/// Real colours for the columns a scan found: the top block's state and biome at a position.
+pub trait Colorize {
+    /// 0xRRGGBB, or 0 for the vanilla map colour.
+    fn column_rgb(&self, state: u32, biome: u16, x: i32, z: i32) -> u32;
+}
 pub fn scan_tile<C: Blocks>(chunk: &C, palette: &Palette, air: u32, layer: Layer, revision: u64) -> Tile {
+    scan_tile_with(chunk, palette, air, layer, revision, None)
+}
+pub fn scan_tile_with<C: Blocks>(
+    chunk: &C,
+    palette: &Palette,
+    air: u32,
+    layer: Layer,
+    revision: u64,
+    colors: Option<(&dyn Colorize, i32, i32)>,
+) -> Tile {
     let top = top_of(chunk, air, layer);
     let mut tile = Tile {
         color: [0; 256],
         height: [chunk.bottom() as i16; 256],
         depth: [0; 256],
+        rgb: [0; 256],
         revision,
         layer,
         scanned: Instant::now(),
     };
     for z in 0..16 {
         for x in 0..16 {
-            let (c, h, d) = scan_column(chunk, palette, x, z, top, layer);
+            let (c, h, d, state) = scan_column_state(chunk, palette, x, z, top, layer);
             let i = (z * 16 + x) as usize;
             tile.color[i] = c;
             tile.height[i] = h;
             tile.depth[i] = d;
+            if let Some((colors, cx, cz)) = colors
+                && c & !WALL != 0
+            {
+                let biome = chunk.biome_at(x, i32::from(h), z);
+                tile.rgb[i] = colors.column_rgb(state, biome, cx * 16 + x, cz * 16 + z);
+            }
         }
     }
     tile

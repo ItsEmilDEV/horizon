@@ -48,6 +48,7 @@ pub mod lod;
 pub mod logging;
 pub mod menu_blur;
 pub mod mesher;
+pub mod mapcolors;
 pub mod mapengine;
 pub mod minimap;
 pub mod mipmap;

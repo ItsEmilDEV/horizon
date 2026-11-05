@@ -24,6 +24,8 @@ pub(super) struct ExtrasState {
     cps: [Cps; 2],
     /// The map engine both maps live on.
     pub(super) engine: MapEngine,
+    /// The resources the engine's colours were made from.
+    colors_for: Option<std::sync::Arc<horizon_client::streaming::WorkerContext>>,
     /// The dimension the map's tiles belong to.
     minimap_dim: Option<Dim>,
     /// The map shows below (a cave or the Nether), and since when the
@@ -178,6 +180,19 @@ impl Game<'_> {
             self.extras.minimap_dim = Some(self.dim);
             self.extras.cave = self.dim == Dim::Nether;
             self.extras.cave_flip = None;
+        }
+        if self
+            .extras
+            .colors_for
+            .as_ref()
+            .is_none_or(|c| !std::sync::Arc::ptr_eq(c, &self.pack.context))
+        {
+            let colors = horizon_client::mapcolors::BlockColors::new(
+                self.pack.context.clone(),
+                self.res.facts().states.len(),
+            );
+            self.extras.engine.set_colors(std::sync::Arc::new(colors));
+            self.extras.colors_for = Some(self.pack.context.clone());
         }
         self.extras.engine.record = world_map;
         let Some(p) = self.player.as_ref() else {

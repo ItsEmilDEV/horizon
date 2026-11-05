@@ -10,7 +10,8 @@ use crate::{
     blocks::BlockFacts,
     fast_hash::{FxHashMap, FxHashSet},
     minimap::{
-        Layer, Palette, Snapshot, Tile, UNKNOWN, WALL, brightness, packed_rgba, scan_tile,
+        Colorize, Layer, Palette, Snapshot, Tile, UNKNOWN, WALL, brightness, packed_rgba,
+        scan_tile_with,
     },
     world::World,
 };
@@ -99,11 +100,14 @@ pub struct Want {
     pub cave: bool,
 }
 
+type Shared<T> = Arc<Mutex<T>>;
+
 pub struct MapEngine {
     jobs: Option<Sender<Job>>,
     done: Receiver<Done>,
     workers: Vec<JoinHandle<()>>,
     palette: Arc<Mutex<Option<Arc<Palette>>>>,
+    colors: Shared<Option<Arc<dyn Colorize + Send + Sync>>>,
     surface: FxHashMap<(i32, i32), Slot>,
     cave: FxHashMap<(i32, i32), Slot>,
     pending: FxHashSet<(Kind, (i32, i32))>,
@@ -131,12 +135,14 @@ impl MapEngine {
         let (tx, done) = channel::<Done>();
         let rx = Arc::new(Mutex::new(rx));
         let palette: Arc<Mutex<Option<Arc<Palette>>>> = Arc::new(Mutex::new(None));
+        let colors: Shared<Option<Arc<dyn Colorize + Send + Sync>>> = Arc::new(Mutex::new(None));
         let workers = (0..WORKERS)
             .map(|i| {
-                let (rx, tx, palette) = (rx.clone(), tx.clone(), palette.clone());
+                let (rx, tx) = (rx.clone(), tx.clone());
+                let (palette, colors) = (palette.clone(), colors.clone());
                 std::thread::Builder::new()
                     .name(format!("belumi-map-{i}"))
-                    .spawn(move || worker(&rx, &tx, &palette))
+                    .spawn(move || worker(&rx, &tx, &palette, &colors))
                     .expect("map worker")
             })
             .collect();
@@ -145,6 +151,7 @@ impl MapEngine {
             done,
             workers,
             palette,
+            colors,
             surface: FxHashMap::default(),
             cave: FxHashMap::default(),
             pending: FxHashSet::default(),
@@ -172,6 +179,20 @@ impl MapEngine {
         self.shown = None;
         self.generation += 1;
         self.painting = false;
+    }
+
+    /// Colour the maps from the blocks' textures and the biomes (tiles scanned before keep the vanilla colours).
+    pub fn set_colors(&mut self, colors: Arc<dyn Colorize + Send + Sync>) {
+        if let Ok(mut c) = self.colors.lock() {
+            *c = Some(colors);
+        }
+        self.surface.clear();
+        self.cave.clear();
+        self.pending.clear();
+        self.generation += 1;
+        self.ready = None;
+        self.painting = false;
+        self.requested = None;
     }
 
     pub fn tile_count(&self) -> usize {
@@ -394,7 +415,12 @@ impl Drop for MapEngine {
     }
 }
 
-fn worker(rx: &Mutex<Receiver<Job>>, tx: &Sender<Done>, shared: &Mutex<Option<Arc<Palette>>>) {
+fn worker(
+    rx: &Mutex<Receiver<Job>>,
+    tx: &Sender<Done>,
+    shared: &Mutex<Option<Arc<Palette>>>,
+    colors: &Mutex<Option<Arc<dyn Colorize + Send + Sync>>>,
+) {
     loop {
         let job = match rx.lock() {
             Ok(rx) => rx.recv(),
@@ -414,7 +440,15 @@ fn worker(rx: &Mutex<Receiver<Job>>, tx: &Sender<Done>, shared: &Mutex<Option<Ar
                 let Some(palette) = shared.lock().ok().and_then(|p| p.clone()) else {
                     continue;
                 };
-                let tile = scan_tile(&snap, &palette, air, layer, 0);
+                let colorize = colors.lock().ok().and_then(|c| c.clone());
+                let tile = scan_tile_with(
+                    &snap,
+                    &palette,
+                    air,
+                    layer,
+                    0,
+                    colorize.as_deref().map(|c| (c as &dyn Colorize, key.0, key.1)),
+                );
                 Done::Scan {
                     generation,
                     key,
@@ -455,7 +489,7 @@ struct Lookup<'a> {
     last: Option<((i32, i32), &'a Tile)>,
 }
 impl<'a> Lookup<'a> {
-    fn get(&mut self, x: i32, z: i32) -> Option<(u8, i16, u8)> {
+    fn get(&mut self, x: i32, z: i32) -> Option<(u8, i16, u8, u32)> {
         let key = (x >> 4, z >> 4);
         let tile = match self.last {
             Some((k, t)) if k == key => t,
@@ -466,8 +500,21 @@ impl<'a> Lookup<'a> {
             }
         };
         let i = ((z & 15) * 16 + (x & 15)) as usize;
-        Some((tile.color[i], tile.height[i], tile.depth[i]))
+        Some((tile.color[i], tile.height[i], tile.depth[i], tile.rgb[i]))
     }
+}
+
+/// A real colour lit from the north-west: higher than the north neighbour is
+/// brighter, lower darker; water darkens with depth.
+fn shaded(rgb: u32, color: u8, height: i16, north: Option<i16>, depth: u8) -> [u8; 4] {
+    let factor = if color == crate::minimap::WATER {
+        (1.0 - f32::from(depth.min(10)) * 0.045).max(0.55)
+    } else {
+        let diff = f32::from(height) - north.map_or(f32::from(height), f32::from);
+        1.0 + diff.clamp(-3.0, 3.0) * 0.06
+    };
+    let ch = |s: u32| (((rgb >> s) & 255) as f32 * factor).clamp(0.0, 255.0) as u8;
+    [ch(16), ch(8), ch(0), 255]
 }
 
 /// North-up canvas centred on (`cx`, `cz`), each texel `bpp` blocks across.
@@ -489,10 +536,14 @@ pub fn paint_canvas(
             let x = wx.floor() as i32;
             let o = (j * CANVAS + i) * 4;
             let rgba = match lookup.get(x, z) {
-                Some((color, height, depth)) if color & !WALL != 0 => {
+                Some((color, height, depth, rgb)) if color & !WALL != 0 => {
                     let north = lookup.get(x, z - 1).filter(|c| c.0 & !WALL != 0).map(|c| c.1);
-                    let b = brightness(color, height, north, depth, x + z);
-                    packed_rgba(color & !WALL, b)
+                    if rgb != 0 {
+                        shaded(rgb, color, height, north, depth)
+                    } else {
+                        let b = brightness(color, height, north, depth, x + z);
+                        packed_rgba(color & !WALL, b)
+                    }
                 }
                 _ => UNKNOWN,
             };
@@ -529,6 +580,18 @@ mod tests {
         assert_eq!(image[centre + 3], 255);
         assert_ne!(&image[centre..centre + 4], &UNKNOWN);
         assert_eq!(&image[0..4], &UNKNOWN);
+    }
+
+    #[test]
+    fn real_colours_shade_by_slope_and_water_depth() {
+        let flat = shaded(0x808080, 1, 64, Some(64), 0);
+        let up = shaded(0x808080, 1, 66, Some(64), 0);
+        let down = shaded(0x808080, 1, 62, Some(64), 0);
+        assert!(up[0] > flat[0] && flat[0] > down[0]);
+        let shallow = shaded(0x3F76E4, crate::minimap::WATER, 62, None, 1);
+        let deep = shaded(0x3F76E4, crate::minimap::WATER, 40, None, 10);
+        assert!(shallow[2] > deep[2]);
+        assert_eq!(flat[3], 255);
     }
 
     #[test]
