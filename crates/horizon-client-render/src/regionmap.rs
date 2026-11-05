@@ -71,7 +71,9 @@ pub fn decode_region(bytes: &[u8], region: (i32, i32)) -> Vec<((i32, i32), Tile)
     if ZlibDecoder::new(body).take(MAX_RAW).read_to_end(&mut raw).is_err() {
         return Vec::new();
     }
-    raw.chunks_exact(RECORD)
+    raw.as_chunks::<RECORD>()
+        .0
+        .iter()
         .filter_map(|rec| {
             let index = i32::from(u16::from_le_bytes([rec[0], rec[1]]));
             if index >= REGION * REGION {
@@ -246,7 +248,7 @@ impl RegionMap {
             .filter(|(_, r)| !r.dirty)
             .map(|(k, _)| (((k.0 - here.0).pow(2) + (k.1 - here.1).pow(2)), *k))
             .collect();
-        far.sort_unstable_by(|a, b| b.0.cmp(&a.0));
+        far.sort_unstable_by_key(|a| std::cmp::Reverse(a.0));
         for (_, k) in far.into_iter().take(self.regions.len() - KEEP) {
             self.regions.remove(&k);
         }

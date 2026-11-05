@@ -432,9 +432,18 @@ impl Game<'_> {
         if !self.belumi_maps.open || !self.settings.belumi.worldmap {
             return;
         }
+        if self.screen != super::Screen::Playing {
+            self.belumi_maps.open = false;
+            return;
+        }
         let Some(p) = self.native_player() else {
             return;
         };
+        if self.dim == Dim::Nether {
+            batch.fill(&self.gui.atlas, 0.0, 0.0, batch.width, batch.height, rgba(0, 0, 0, 150));
+            self.native_text(batch, "The Nether is not mapped yet.   M: close", [batch.width / 2.0 - 90.0, batch.height / 2.0], 0x00FF_FFFF, true);
+            return;
+        }
         let atlas = &self.gui.atlas;
         let Some(sprite) = atlas.sprites.get(WORLDMAP_SPRITE).copied() else {
             return;

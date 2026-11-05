@@ -38,7 +38,7 @@ pub struct BlockColors {
 /// The mean colour of an RGBA square, weighted by alpha, as 0xRRGGBB; none when it is all clear.
 pub fn average_rgb(rgba: &[u8]) -> Option<u32> {
     let (mut r, mut g, mut b, mut weight) = (0u64, 0u64, 0u64, 0u64);
-    for p in rgba.chunks_exact(4) {
+    for p in rgba.as_chunks::<4>().0 {
         let a = u64::from(p[3]);
         r += u64::from(p[0]) * a;
         g += u64::from(p[1]) * a;
