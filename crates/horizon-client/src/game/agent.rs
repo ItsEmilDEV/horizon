@@ -420,6 +420,7 @@ impl Game<'_> {
             Screen::Friends => "friends",
             Screen::ServerLinks => "server-links",
             Screen::BelumiVoice => "belumi-voice",
+            Screen::BelumiClient => "belumi-client",
             Screen::ConfirmLink => "confirm-link",
             Screen::DialogWarning => "dialog-warning",
             Screen::CommandBlock => "command-block",

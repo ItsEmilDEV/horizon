@@ -312,6 +312,7 @@ impl Game<'_> {
         self.belumi_plugins_frame();
         self.belumi_voice_frame(elapsed.as_secs_f32());
         self.belumi_freecam_frame(elapsed.as_secs_f32());
+        self.modules_tick();
         self.belumi_explore(elapsed.as_secs_f32());
     }
     /// Once a tick, in every `Game`: the window's (in single player, on LAN
@@ -349,6 +350,7 @@ impl Game<'_> {
     pub(super) fn native_hud(&mut self, batch: &mut HudBatch, corners: &mut Corners) {
         self.belumi_hud(batch, corners);
         self.belumi_draw_labels(batch);
+        self.belumi_modules_draw(batch);
         self.belumi_draw_worldmap(batch);
     }
     /// A key or mouse button went down or up, by its vanilla name
@@ -359,6 +361,7 @@ impl Game<'_> {
         self.belumi_map_key(key, pressed);
         self.belumi_plugins_key(key, pressed);
         self.belumi_voice_key(key, pressed);
+        self.belumi_client_key(key, pressed);
     }
     /// Wheel steps while playing: set `claimed` to keep them from the hotbar.
     pub(super) fn native_wheel(&mut self, steps: f32, claimed: &mut bool) {
@@ -370,6 +373,7 @@ impl Game<'_> {
     /// server and Horizon's commands see it: set `ran` when the mod ran it.
     pub(super) fn native_command(&mut self, command: &str, ran: &mut bool) {
         self.belumi_plugins_command(command, ran);
+        self.belumi_client_command(command, ran);
         self.belumi_command(command, ran);
         self.belumi_voice_command(command, ran);
         self.belumi_map_command(command, ran);

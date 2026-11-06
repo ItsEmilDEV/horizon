@@ -51,6 +51,7 @@ mod beds;
 mod beehives;
 mod belumi;
 mod belumi_diagnose;
+mod belumi_client;
 mod belumi_freecam;
 mod belumi_maps;
 mod map_entities;
@@ -698,6 +699,8 @@ enum Screen {
     Win,
     /// Belumi's voice chat screen (game/belumi_voice.rs).
     BelumiVoice,
+    /// Belumi's client screen: the HUD builder and the module pages (game/belumi_client.rs).
+    BelumiClient,
 }
 struct Mining {
     pos: [i32; 3],
@@ -2113,6 +2116,7 @@ struct Game<'a> {
     belumi: belumi::BelumiState,
     belumi_maps: belumi_maps::MapState,
     belumi_free: belumi_freecam::FreecamState,
+    belumi_client: belumi_client::ClientState,
     belumi_plugins: belumi_plugins::PluginState,
     belumi_voice: belumi_voice::VoiceState,
     /// Horizon mods (`game/mods.rs`), none running unless turned on.
@@ -6412,6 +6416,8 @@ impl Game<'_> {
                 self.belumi_freecam_turn(xo, yo);
             } else if self.belumi_maps_open() {
                 self.belumi_map_drag(xo, yo);
+            } else if self.belumi_freelook_active() {
+                self.belumi_freelook_turn(xo, yo);
             } else {
                 let zoom = self.zoom_turn_scale();
                 self.turn_player(xo * zoom, yo * zoom);
@@ -6803,8 +6809,10 @@ impl Game<'_> {
                 let full = attack.is_some_and(|a| {
                     hud_layout::full_attack_indicator(a, delay, self.crosshair_living())
                 });
-                let draws = hud_layout::crosshair(wi, hi, attack, full);
-                hud_layout::paint(&mut batch, &self.gui.atlas, &draws);
+                if !self.belumi_crosshair_draw(&mut batch) {
+                    let draws = hud_layout::crosshair(wi, hi, attack, full);
+                    hud_layout::paint(&mut batch, &self.gui.atlas, &draws);
+                }
             }
             if spectator {
                 self.draw_spectator_hotbar(&mut batch);
@@ -7009,6 +7017,7 @@ impl Game<'_> {
             Screen::Friends => self.draw_friends_screen(&mut batch),
             Screen::ServerLinks => self.draw_server_links(&mut batch),
             Screen::BelumiVoice => self.belumi_voice_draw_screen(&mut batch),
+            Screen::BelumiClient => self.belumi_client_draw_screen(&mut batch),
             Screen::ConfirmLink => self.draw_confirm_link(&mut batch),
             Screen::DialogWarning => self.draw_dialog_warning(&mut batch),
             Screen::CommandBlock => self.draw_command_block(&mut batch),
@@ -8741,6 +8750,9 @@ impl Game<'_> {
     /// third-person front view.
     pub(super) fn camera_orientation(&self) -> glam::Quat {
         if let Some((_, yaw, pitch)) = self.belumi_freecam_view() {
+            return camera_rotation(self.camera_type, yaw, pitch);
+        }
+        if let Some((yaw, pitch)) = self.belumi_freelook_angles() {
             return camera_rotation(self.camera_type, yaw, pitch);
         }
         camera_rotation(self.camera_type, self.yaw, self.pitch)
@@ -13259,6 +13271,7 @@ impl Game<'_> {
                 Screen::Chat => self.close_chat(),
                 Screen::Win => self.close_win_screen()?,
                 Screen::BelumiVoice => self.belumi_voice_close_screen(),
+                Screen::BelumiClient => self.belumi_client_close_screen(),
             },
             KeyCode::Digit1
             | KeyCode::Digit2
@@ -14042,6 +14055,9 @@ impl ApplicationHandler for Game<'_> {
                     if self.screen == Screen::BelumiVoice && d != 0.0 {
                         self.belumi_voice_scroll(f64::from(d));
                     }
+                    if self.screen == Screen::BelumiClient && d != 0.0 {
+                        self.belumi_client_scroll(f64::from(d));
+                    }
                     if self.screen == Screen::Advancements {
                         self.advancements_scroll(scaled(raw_x) as f32, d);
                     }
@@ -14241,6 +14257,9 @@ impl ApplicationHandler for Game<'_> {
                         Screen::BelumiVoice if pressed && button == MouseButton::Left => {
                             self.belumi_voice_click()
                         }
+                        Screen::BelumiClient if button == MouseButton::Left => {
+                            self.belumi_client_mouse(pressed)
+                        }
                         Screen::ConfirmLink if pressed && button == MouseButton::Left => {
                             self.confirm_link_click()
                         }
@@ -14404,6 +14423,9 @@ impl ApplicationHandler for Game<'_> {
                 }
                 WindowEvent::KeyboardInput { event, .. } if self.screen == Screen::BelumiVoice => {
                     self.belumi_voice_screen_key(&event)
+                }
+                WindowEvent::KeyboardInput { event, .. } if self.screen == Screen::BelumiClient => {
+                    self.belumi_client_screen_key(&event)
                 }
                 WindowEvent::KeyboardInput { event, .. } if self.screen == Screen::CommandBlock => {
                     self.command_block_key(&event)
@@ -15189,6 +15211,7 @@ impl<'a> Game<'a> {
             belumi: Default::default(),
             belumi_maps: Default::default(),
             belumi_free: Default::default(),
+            belumi_client: Default::default(),
             belumi_plugins: Default::default(),
             belumi_voice: Default::default(),
             mods: Default::default(),

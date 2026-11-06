@@ -2214,7 +2214,7 @@ impl Game<'_> {
     }
     /// Options.advancedItemTooltips (F3+H).
     fn options_advanced_tooltips(&self) -> bool {
-        self.settings.file.bool("advancedItemTooltips")
+        self.settings.file.bool("advancedItemTooltips") || self.modules_ref().is_some_and(|m| m.misc.tooltips)
     }
     /// `TooltipRenderUtil`: dark box with the purple border, first line spaced.
     pub(super) fn draw_tooltip_lines<T: Clone + Into<horizon_client::text::Text>>(

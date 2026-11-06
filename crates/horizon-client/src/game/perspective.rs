@@ -229,6 +229,10 @@ impl Game<'_> {
             ),
         };
         let mut view = self.view;
+        if let Some((yaw, pitch)) = self.belumi_freelook_angles() {
+            view.y_rot = yaw;
+            view.x_rot = pitch;
+        }
         let kind = match self.camera_type {
             CameraType::FirstPerson => horizon_client::camera::CameraType::FirstPerson,
             CameraType::ThirdPersonBack => horizon_client::camera::CameraType::ThirdPersonBack,

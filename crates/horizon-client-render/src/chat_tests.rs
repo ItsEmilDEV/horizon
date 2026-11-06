@@ -578,3 +578,56 @@ fn a_deleted_message_shows_60_ticks_then_becomes_the_marker() {
     assert_eq!(lines(&chat), [marker.clone(), marker]);
     assert!(chat.deletions.is_empty());
 }
+
+fn say(chat: &mut Chat, font: &Font, text: &str) {
+    chat.add_message(font, Text::literal(text), None, ChatSource::Server, 0, false);
+}
+
+fn shown(chat: &Chat) -> Vec<String> {
+    chat.messages.iter().map(|m| m.content.plain()).collect()
+}
+
+#[test]
+fn chat_tools_hide_stamp_merge_and_count_mentions() {
+    let font = font();
+    let mut chat = Chat::default();
+    chat.tools.hide = vec!["spam".into()];
+    chat.tools.timestamps = true;
+    chat.tools.merge_spam = true;
+    chat.local_seconds = 3600 * 13 + 60 * 5;
+    chat.me = "Alex".into();
+    say(&mut chat, &font, "buy spam");
+    assert!(shown(&chat).is_empty());
+    say(&mut chat, &font, "hello");
+    say(&mut chat, &font, "hello");
+    say(&mut chat, &font, "hello");
+    assert_eq!(shown(&chat), vec!["[13:05] hello (x3)".to_owned()]);
+    say(&mut chat, &font, "hi alex!");
+    assert_eq!(chat.take_mentions(), 1);
+    assert_eq!(chat.take_mentions(), 0);
+    assert_eq!(chat.search("HELLO", 5), vec!["[13:05] hello (x3)".to_owned()]);
+}
+
+#[test]
+fn a_longer_history_keeps_more_messages() {
+    let font = font();
+    let mut chat = Chat::default();
+    for i in 0..150 {
+        say(&mut chat, &font, &format!("line {i}"));
+    }
+    assert_eq!(chat.messages.len(), 100);
+    chat.tools.history = 400;
+    for i in 150..300 {
+        say(&mut chat, &font, &format!("line {i}"));
+    }
+    assert_eq!(chat.messages.len(), 250);
+}
+
+#[test]
+fn highlighted_lines_get_a_colour_where_none_was_set() {
+    let font = font();
+    let mut chat = Chat::default();
+    chat.tools.highlight = vec!["base".into()];
+    say(&mut chat, &font, "my base");
+    assert_eq!(chat.messages[0].content.spans[0].style.color, Some(0x00FF_E14D));
+}

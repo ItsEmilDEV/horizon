@@ -50,6 +50,7 @@ pub mod mesher;
 pub mod mapcolors;
 pub mod mapengine;
 pub mod minimap;
+pub mod modules;
 pub mod regionmap;
 pub mod mipmap;
 pub mod mod_list;

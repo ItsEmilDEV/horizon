@@ -809,6 +809,14 @@ impl Audio {
         self.capture = capture;
     }
     /// `AbstractWidget.playButtonClickSound`: an unseeded, relative UI sound.
+    /// A short bell for a chat line that names the player.
+    pub fn play_ping(&mut self) {
+        self.play_instance(
+            SoundInstance::for_ui("minecraft:block.note_block.bell", 1.2, 0.8, SoundEngine::unseeded()),
+            false,
+        );
+    }
+
     pub fn play_button_click(&mut self) {
         self.play_instance(
             SoundInstance::for_ui(

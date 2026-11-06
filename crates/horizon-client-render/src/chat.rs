@@ -216,8 +216,38 @@ pub struct Chat {
     /// `ChatComponent.messageDeletionQueue`: deletions of messages still
     /// too new to replace, with the tick from which they may be.
     deletions: Vec<(Box<Signature>, u64)>,
+    /// The client's chat tools (`modules.rs`): filter, highlight, time stamps, merging, history length.
+    pub tools: crate::modules::ChatTools,
+    /// Seconds since local midnight, for the time stamps (kept current by the game).
+    pub local_seconds: u32,
+    /// The player's own name, for the mention ping.
+    pub me: String,
+    /// New lines that name the player since the game last asked.
+    pub mentions: u32,
+    /// The newest line's plain text, how many times it came in a row, and what it looks like.
+    repeat: Option<(String, u32, Text)>,
 }
 impl Chat {
+    fn limit(&self) -> usize {
+        (self.tools.history as usize).clamp(100, 2000)
+    }
+
+    /// The plain text of kept messages that contain `needle`, newest first.
+    pub fn search(&self, needle: &str, max: usize) -> Vec<String> {
+        let needle = needle.to_lowercase();
+        self.messages
+            .iter()
+            .map(|m| m.content.plain())
+            .filter(|p| p.to_lowercase().contains(&needle))
+            .take(max)
+            .collect()
+    }
+
+    /// Takes the count of lines that named the player.
+    pub fn take_mentions(&mut self) -> u32 {
+        std::mem::take(&mut self.mentions)
+    }
+
     pub fn lines_per_page(&self, focused: bool) -> usize {
         (self.options.height_px(focused) / self.options.line_height().max(1)) as usize
     }
@@ -291,7 +321,7 @@ impl Chat {
             focused,
         );
     }
-    fn push_message(&mut self, font: &crate::font::Font, message: Message, focused: bool) {
+    fn push_message(&mut self, font: &crate::font::Font, mut message: Message, focused: bool) {
         if !self.abilities.shows(message.source) {
             return;
         }
@@ -301,9 +331,41 @@ impl Chat {
         if self.log {
             println!("[CHAT] {plain}");
         }
+        let (hidden, mark) = crate::modules::judge_line(&plain, &self.tools);
+        if hidden {
+            return;
+        }
+        if !self.me.is_empty() && crate::modules::mentions(&plain, &self.me) {
+            self.mentions += 1;
+        }
+        if self.tools.merge_spam
+            && let Some((last, count, base)) = self.repeat.as_mut()
+            && *last == plain
+            && !self.messages.is_empty()
+        {
+            *count += 1;
+            let times = *count;
+            let content = base.clone().append(Text::colored(format!(" (x{times})"), 0x00AA_AAAA));
+            self.messages[0].content = content;
+            self.rewrap(font);
+            return;
+        }
+        if let Some(color) = mark {
+            for span in &mut message.content.spans {
+                if span.style.color.is_none() {
+                    span.style.color = Some(color);
+                }
+            }
+        }
+        if self.tools.timestamps {
+            let stamp = format!("[{}] ", crate::modules::clock_text(self.local_seconds, self.tools.seconds));
+            message.content = Text::colored(stamp, 0x0088_8888).append(message.content);
+        }
+        self.repeat = Some((plain, 1, message.content.clone()));
         self.add_lines(font, &message, focused);
         self.messages.insert(0, message);
-        self.messages.truncate(100);
+        let keep = self.limit();
+        self.messages.truncate(keep);
         self.received += 1;
     }
     fn add_lines(&mut self, font: &crate::font::Font, message: &Message, focused: bool) {
@@ -323,7 +385,8 @@ impl Chat {
                 },
             );
         }
-        self.lines.truncate(100);
+        let keep = self.limit();
+        self.lines.truncate(keep);
     }
     /// What a message's lines wrap (ComponentRenderUtils.wrapComponents):
     /// without Chat Colors its `§` codes are stripped (stripColor); with
