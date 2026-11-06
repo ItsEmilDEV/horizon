@@ -45,6 +45,8 @@ pub(super) enum Act {
     Select(String),
     ScaleDown,
     ScaleUp,
+    BgDown,
+    BgUp,
     Flag(String, String),
     Sprint,
     Sneak,
@@ -455,9 +457,15 @@ impl Game<'_> {
     }
 
     /// Draws one built module at its place. `outline`: a frame around it (the builder's).
-    fn paint_module(&self, batch: &mut HudBatch, built: &Built, at: (f32, f32), scale: f32) {
+    fn paint_module(&self, batch: &mut HudBatch, built: &Built, at: (f32, f32), scale: f32, bg: u8) {
         let mut all = vec![GuiDraw::Push(vec![PoseOp::Translate(at.0, at.1), PoseOp::Scale(scale, scale)])];
-        all.extend(built.draws.iter().cloned());
+        all.extend(built.draws.iter().cloned().map(|d| match d {
+            GuiDraw::Fill { x0, y0, x1, y1, color } if bg < 100 => {
+                let a = ((color >> 24) as f32 * f32::from(bg) / 100.0).round() as u32;
+                GuiDraw::Fill { x0, y0, x1, y1, color: (a << 24) | (color & 0x00FF_FFFF) }
+            }
+            other => other,
+        }));
         all.push(GuiDraw::Pop);
         hud_layout::paint(batch, &self.gui.atlas, &all);
         for (stack, x, y) in &built.items {
@@ -486,7 +494,7 @@ impl Game<'_> {
             let scale = Self::module_scale(&p);
             let size = (built.w * scale, built.h * scale);
             let at = modules::position(&p, (batch.width, batch.height), size);
-            self.paint_module(batch, &built, (at.0.round(), at.1.round()), scale);
+            self.paint_module(batch, &built, (at.0.round(), at.1.round()), scale, p.bg);
         }
     }
 
@@ -771,6 +779,15 @@ impl Game<'_> {
                     self.modules_changed();
                 }
             }
+            Act::BgDown | Act::BgUp => {
+                let up = act == Act::BgUp;
+                if let Some(id) = self.belumi_client.selected.clone()
+                    && let Some(m) = self.modules().hud_mut(&id)
+                {
+                    m.bg = (i16::from(m.bg) + if up { 10 } else { -10 }).clamp(0, 100) as u8;
+                    self.modules_changed();
+                }
+            }
             Act::Flag(id, name) => {
                 if let Some(m) = self.modules().hud_mut(&id) {
                     let default = !matches!(name.as_str(), "seconds");
@@ -984,7 +1001,7 @@ impl Game<'_> {
             let size = (built.w * scale, built.h * scale);
             let at = modules::position(p, (w, h), size);
             let (ax, ay) = (at.0.round(), at.1.round());
-            self.paint_module(batch, &built, (ax, ay), scale);
+            self.paint_module(batch, &built, (ax, ay), scale, p.bg);
             let chosen = selected.as_deref() == Some(p.id.as_str());
             let edge = if chosen { ACCENT_HOVER } else { 0xA0FF_FFFF };
             for r in [[ax - 1.0, ay - 1.0, size.0 + 2.0, 1.0], [ax - 1.0, ay + size.1, size.0 + 2.0, 1.0], [ax - 1.0, ay, 1.0, size.1], [ax + size.0, ay, 1.0, size.1]] {
@@ -1028,6 +1045,11 @@ impl Game<'_> {
                 row.push(("-".into(), None, Act::ScaleDown, 16.0));
                 row.push((format!("{:.0}%", p.scale * 100.0), None, Act::Select(id.clone()), 34.0));
                 row.push(("+".into(), None, Act::ScaleUp, 16.0));
+            }
+            if !matches!(p.id.as_str(), "armor" | "inventory") {
+                row.push(("Bg -".into(), None, Act::BgDown, 8.0 + self.native_text_width("Bg -")));
+                row.push((format!("{}%", p.bg), None, Act::Select(id.clone()), 30.0));
+                row.push(("+".into(), None, Act::BgUp, 16.0));
             }
             let flags: &[(&str, &str, bool)] = match p.id.as_str() {
                 "keystrokes" => &[("mouse", "Mouse", true), ("space", "Space", true)],

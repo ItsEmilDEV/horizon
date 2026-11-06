@@ -35,6 +35,13 @@ pub struct Placed {
     /// The module's own switches (for example `mouse` for the keystrokes' buttons).
     #[serde(default)]
     pub opt: BTreeMap<String, bool>,
+    /// How solid the module's background is, in percent (0 shows the text alone).
+    #[serde(default = "full")]
+    pub bg: u8,
+}
+
+fn full() -> u8 {
+    100
 }
 
 impl Placed {
@@ -247,7 +254,7 @@ fn default_placed(id: &str) -> Placed {
         "inventory" => (0.98, 0.95),
         _ => (0.98, 0.02),
     };
-    Placed { id: id.into(), enabled: false, nx, ny, scale: 1.0, opt: BTreeMap::new() }
+    Placed { id: id.into(), enabled: false, nx, ny, scale: 1.0, opt: BTreeMap::new(), bg: 100 }
 }
 
 impl Modules {
@@ -287,6 +294,7 @@ impl Modules {
             }
         }
         for m in &mut self.hud {
+            m.bg = m.bg.min(100);
             m.nx = if m.nx.is_finite() { m.nx.clamp(0.0, 1.0) } else { 0.0 };
             m.ny = if m.ny.is_finite() { m.ny.clamp(0.0, 1.0) } else { 0.0 };
             m.scale = if m.scale.is_finite() { m.scale.clamp(0.5, 3.0) } else { 1.0 };
@@ -433,12 +441,22 @@ mod tests {
     fn a_layout_survives_a_file_with_missing_and_broken_modules() {
         let mut m = Modules::default();
         m.hud.retain(|p| p.id != "cps");
-        m.hud.push(Placed { id: "nonsense".into(), enabled: true, nx: f32::NAN, ny: 9.0, scale: 0.0, opt: BTreeMap::new() });
+        m.hud.push(Placed { id: "nonsense".into(), enabled: true, nx: f32::NAN, ny: 9.0, scale: 0.0, opt: BTreeMap::new(), bg: 100 });
         m.hud[0].nx = 7.0;
         m.repair();
         assert_eq!(m.hud.len(), HUD_IDS.len());
         assert!(m.hud_ref("cps").is_some() && m.hud_ref("nonsense").is_none());
         assert_eq!(m.hud[0].nx, 1.0);
+    }
+
+    #[test]
+    fn the_background_defaults_to_solid_and_is_capped() {
+        let old = "[[hud]]\nid = \"cps\"\nenabled = true\nnx = 0.5\nny = 0.5\nscale = 1.0\n";
+        let mut m: Modules = toml::from_str(old).unwrap();
+        assert_eq!(m.hud[0].bg, 100);
+        m.hud[0].bg = 250;
+        m.repair();
+        assert_eq!(m.hud_ref("cps").unwrap().bg, 100);
     }
 
     #[test]
@@ -458,7 +476,7 @@ mod tests {
 
     #[test]
     fn positions_and_fractions_agree() {
-        let p = Placed { id: "cps".into(), enabled: true, nx: 0.25, ny: 1.0, scale: 1.0, opt: BTreeMap::new() };
+        let p = Placed { id: "cps".into(), enabled: true, nx: 0.25, ny: 1.0, scale: 1.0, opt: BTreeMap::new(), bg: 100 };
         let at = position(&p, (400.0, 240.0), (100.0, 40.0));
         assert_eq!(at, (75.0, 200.0));
         assert_eq!(fractions(at, (400.0, 240.0), (100.0, 40.0)), (0.25, 1.0));
