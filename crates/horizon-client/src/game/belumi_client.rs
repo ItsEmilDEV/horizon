@@ -78,6 +78,11 @@ pub(super) struct ClientState {
     dirty: bool,
     last_save: Option<std::time::Instant>,
     freelook: Option<Freelook>,
+    /// How far each keystrokes key is lit (0 to 1), eased so a press fades in and out.
+    fade: std::collections::BTreeMap<String, f32>,
+    /// Seconds since the last frame, for the fades.
+    fade_dt: f32,
+    fade_at: Option<std::time::Instant>,
 }
 
 pub(super) struct Freelook {
@@ -95,6 +100,16 @@ struct Built {
     items: Vec<(ItemStack, f32, f32)>,
     /// What stands in for the module in the builder when it has nothing to show.
     empty: bool,
+}
+
+/// `a` to `b` by `t`, channel by channel (ARGB).
+fn mix(a: u32, b: u32, t: f32) -> u32 {
+    let t = t.clamp(0.0, 1.0);
+    (0..4).fold(0, |out, i| {
+        let sh = i * 8;
+        let (x, y) = (((a >> sh) & 0xFF) as f32, ((b >> sh) & 0xFF) as f32);
+        out | (((x + (y - x) * t).round() as u32) << sh)
+    })
 }
 
 fn fill(draws: &mut Vec<GuiDraw>, x: f32, y: f32, w: f32, h: f32, color: u32) {
@@ -216,6 +231,14 @@ impl Game<'_> {
         self.native_mapping(name).unwrap_or((false, String::new()))
     }
 
+    /// How lit a key is: eases towards 1 while held and back to 0 after (about 0.12 s each way).
+    fn key_fade(&mut self, name: &str, down: bool) -> f32 {
+        let step = (self.belumi_client.fade_dt / 0.12).min(1.0);
+        let v = self.belumi_client.fade.entry(name.to_owned()).or_insert(0.0);
+        *v = if down { (*v + step).min(1.0) } else { (*v - step).max(0.0) };
+        *v
+    }
+
     fn short_label(label: &str) -> String {
         let l = label.trim();
         if l.chars().count() <= 3 { l.to_uppercase() } else { l.chars().take(3).collect() }
@@ -236,10 +259,11 @@ impl Game<'_> {
                 let key = |draws: &mut Vec<GuiDraw>, this: &mut Self, name: &str, x: f32, y: f32, kw: f32, kh: f32, label: Option<String>| {
                     let (down, shown) = this.mapping_label(name);
                     let label = label.unwrap_or_else(|| Self::short_label(&shown));
-                    fill(draws, x, y, kw, kh, if down { 0xE0FF_FFFF } else { 0x9000_0000 });
+                    let lit = this.key_fade(name, down);
+                    fill(draws, x, y, kw, kh, mix(0x9000_0000, 0xE0FF_FFFF, lit));
                     let lw = HudBatch::text_width(&this.gui.atlas, &label);
-                    let color = if down { 0x0018_1820 } else { 0x00FF_FFFF };
-                    draws.push(GuiDraw::Text { text: Text::literal(&label), x: (x + (kw - lw) / 2.0) as i32, y: (y + (kh - 8.0) / 2.0) as i32, color: color | 0xFF00_0000, shadow: !down });
+                    let color = mix(0xFFFF_FFFF, 0xFF18_1820, lit);
+                    draws.push(GuiDraw::Text { text: Text::literal(&label), x: (x + (kw - lw) / 2.0) as i32, y: (y + (kh - 8.0) / 2.0) as i32, color, shadow: lit < 0.5 });
                 };
                 key(&mut draws, self, "key.forward", cell + gap, y, cell, cell, None);
                 y += cell + gap;
@@ -253,20 +277,22 @@ impl Game<'_> {
                     for (i, (name, label, n)) in [("key.attack", "LMB", l), ("key.use", "RMB", r)].into_iter().enumerate() {
                         let x = i as f32 * (half + gap);
                         let (down, _) = self.mapping_label(name);
-                        fill(&mut draws, x, y, half, cell + 4.0, if down { 0xE0FF_FFFF } else { 0x9000_0000 });
-                        let color = if down { 0x0018_1820 } else { 0x00FF_FFFF };
+                        let lit = self.key_fade(name, down);
+                        fill(&mut draws, x, y, half, cell + 4.0, mix(0x9000_0000, 0xE0FF_FFFF, lit));
+                        let color = mix(0xFFFF_FFFF, 0xFF18_1820, lit);
                         let lw = HudBatch::text_width(&self.gui.atlas, label);
-                        draws.push(GuiDraw::Text { text: Text::literal(label), x: (x + (half - lw) / 2.0) as i32, y: (y + 3.0) as i32, color: color | 0xFF00_0000, shadow: !down });
+                        draws.push(GuiDraw::Text { text: Text::literal(label), x: (x + (half - lw) / 2.0) as i32, y: (y + 3.0) as i32, color, shadow: lit < 0.5 });
                         let count = format!("{n}");
                         let cw = HudBatch::text_width(&self.gui.atlas, &count);
-                        draws.push(GuiDraw::Text { text: Text::literal(&count), x: (x + (half - cw) / 2.0) as i32, y: (y + 12.0) as i32, color: if down { 0xFF55_5566 } else { 0xFFAA_B3C6 }, shadow: false });
+                        draws.push(GuiDraw::Text { text: Text::literal(&count), x: (x + (half - cw) / 2.0) as i32, y: (y + 12.0) as i32, color: mix(0xFFAA_B3C6, 0xFF55_5566, lit), shadow: false });
                     }
                     y += cell + 4.0 + gap;
                 }
                 if space {
                     let (down, _) = self.mapping_label("key.jump");
-                    fill(&mut draws, 0.0, y, total_w, 10.0, if down { 0xE0FF_FFFF } else { 0x9000_0000 });
-                    fill(&mut draws, 14.0, y + 4.0, total_w - 28.0, 2.0, if down { 0xFF18_1820 } else { 0xFFAA_B3C6 });
+                    let lit = self.key_fade("key.jump", down);
+                    fill(&mut draws, 0.0, y, total_w, 10.0, mix(0x9000_0000, 0xE0FF_FFFF, lit));
+                    fill(&mut draws, 14.0, y + 4.0, total_w - 28.0, 2.0, mix(0xFFAA_B3C6, 0xFF18_1820, lit));
                     y += 10.0 + gap;
                 }
                 (w, h, empty) = (total_w, y - gap, false);
@@ -276,7 +302,9 @@ impl Game<'_> {
                 let label = if p.flag("split", true) { format!("{l} | {r} CPS") } else { format!("{} CPS", l + r) };
                 let tw = HudBatch::text_width(&self.gui.atlas, &label);
                 fill(&mut draws, 0.0, 0.0, tw + 8.0, 14.0, 0x9000_0000);
-                text(&mut draws, &label, 4.0, 3.0, 0x00FF_FFFF);
+                let rate = l.max(r);
+                let color = if rate >= 12 { 0x004D_FF6A } else if rate >= 7 { 0x00FF_E14D } else { 0x00FF_FFFF };
+                text(&mut draws, &label, 4.0, 3.0, color);
                 (w, h, empty) = (tw + 8.0, 14.0, false);
             }
             "effects" => {
@@ -442,6 +470,9 @@ impl Game<'_> {
         if self.belumi_client.modules.is_none() {
             let _ = self.modules();
         }
+        let now = std::time::Instant::now();
+        let last = self.belumi_client.fade_at.replace(now);
+        self.belumi_client.fade_dt = last.map_or(0.0, |t| now.duration_since(t).as_secs_f32().min(0.1));
         self.belumi_replay_hud(batch, true);
         if self.screen == Screen::BelumiClient || self.ui.hide_gui {
             return;
