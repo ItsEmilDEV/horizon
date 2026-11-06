@@ -105,7 +105,7 @@ pub fn draw_minimap(
     atlas: &HudAtlas,
     corners: &mut Corners,
     look: &MinimapLook<'_>,
-) {
+) -> (f32, f32) {
     let MinimapLook {
         corner,
         size,
@@ -191,6 +191,7 @@ pub fn draw_minimap(
             true,
         );
     }
+    (cx, cy)
 }
 
 /// A box of text lines (a mod's HUD panel): `(text, 0xRRGGBB)` each.

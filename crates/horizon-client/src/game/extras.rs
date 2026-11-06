@@ -349,7 +349,21 @@ impl Game<'_> {
                     window: mapengine::WINDOW as f32,
                 },
             };
-            extras_hud::draw_minimap(batch, atlas, &mut corners, &look);
+            let (mx, my) = extras_hud::draw_minimap(batch, atlas, &mut corners, &look);
+            if self.map_icons_wanted() {
+                let (right, forward) = view.axes();
+                let per_block = f64::from(map_size) / (horizon_client_render::minimap::SIZE as f64 * f64::from(view.blocks_per_pixel));
+                let half = f64::from(map_size) / 2.0 - 5.0;
+                for row in self.map_icon_rows() {
+                    let (dx, dz) = (row.pos[0] - view.x, row.pos[2] - view.z);
+                    let x = (dx * right[0] + dz * right[1]) * per_block;
+                    let y = -(dx * forward[0] + dz * forward[1]) * per_block;
+                    let inside = if view.round { x.hypot(y) <= half } else { x.abs() <= half && y.abs() <= half };
+                    if inside {
+                        self.draw_map_icon(batch, &row, mx + x as f32, my + y as f32, 8.0);
+                    }
+                }
+            }
         }
         self.native_hud(batch, &mut corners);
     }

@@ -652,6 +652,7 @@ impl Game<'_> {
         let Some(p) = self.native_player() else {
             return;
         };
+        let icon_rows = self.map_icons_wanted().then(|| self.map_icon_rows());
         let atlas = &self.gui.atlas;
         let Some(sprite) = atlas.sprites.get(WORLDMAP_SPRITE).copied() else {
             return;
@@ -752,7 +753,15 @@ impl Game<'_> {
                 u32::MAX,
             );
         }
-        if self.settings.belumi.map_entities
+        if let Some(rows) = &icon_rows {
+            for row in rows {
+                let (sx, sy) = to_screen(row.pos[0], row.pos[2]);
+                if sx < x + 6.0 || sy < y + 6.0 || sx > x + side - 6.0 || sy > y + side - 6.0 {
+                    continue;
+                }
+                self.draw_map_icon(batch, row, sx, sy, 10.0);
+            }
+        } else if self.settings.belumi.map_entities
             && let Some(remote) = self.remote.as_ref()
         {
             for (is_player, pos, kind) in remote.map_entities() {

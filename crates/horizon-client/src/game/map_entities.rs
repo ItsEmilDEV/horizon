@@ -1,6 +1,8 @@
 use horizon_client::hud::rgba;
 use super::Game;
 use horizon_client::extras_hud::Dot;
+use horizon_client::hud::HudBatch;
+use horizon_client::items::ItemStack;
 use horizon_client_render::minimap::{SIZE, View};
 
 const PLAYER: u32 = 0xFFFF_FFFF;
@@ -42,6 +44,28 @@ pub(super) fn color_of(kind: &str, is_player: bool) -> Option<u32> {
     }
 }
 
+/// Mobs that have no spawn egg to stand for them.
+const NO_EGG: &[&str] = &["iron_golem", "snow_golem", "wither", "ender_dragon"];
+
+/// What stands for an entity while the player list is held.
+#[derive(Clone)]
+pub(super) enum Icon {
+    /// A player's face: the skin sprite the player list draws from.
+    Face(String),
+    /// A mob's spawn egg.
+    Egg(String),
+    /// Nothing better: a dot in this colour.
+    Dot(u32),
+}
+
+/// An entity for the maps' player-list view: where it is, its icon and its name.
+#[derive(Clone)]
+pub(super) struct Row {
+    pub pos: [f64; 3],
+    pub icon: Icon,
+    pub label: Option<String>,
+}
+
 /// Where a waypoint sits on the minimap, pinned to the rim when it is out of range.
 pub(super) fn waypoint_spot(x: f64, y: f64, half: f64, round: bool) -> (f32, f32) {
     let outside = if round { x.hypot(y) > half } else { x.abs() > half || y.abs() > half };
@@ -75,9 +99,76 @@ impl Game<'_> {
             .collect()
     }
 
+    /// The player list is held: the maps show faces and names instead of dots.
+    pub(super) fn map_icons_wanted(&self) -> bool {
+        self.settings.belumi.map_entities
+            && self.screen == super::Screen::Playing
+            && self.keys.contains(&winit::keyboard::KeyCode::Tab)
+    }
+
+    /// The entities for the player-list view: players with their face and name (always), mobs with their egg
+    /// and the name they were given.
+    pub(super) fn map_icon_rows(&mut self) -> Vec<Row> {
+        let Some(remote) = self.remote.as_ref() else {
+            return Vec::new();
+        };
+        let me = remote.profile();
+        let list = remote.map_entity_list();
+        let info: std::collections::HashMap<u128, (String, String)> = remote
+            .tab_players
+            .iter()
+            .map(|(u, p)| (*u, (p.name.clone(), p.skin.clone())))
+            .collect();
+        let mut rows = Vec::new();
+        for (id, player, pos, kind) in list {
+            if let Some(uuid) = player {
+                if uuid == me {
+                    continue;
+                }
+                let (name, skin) = info.get(&uuid).cloned().unwrap_or_default();
+                let skin = self.face_skin(uuid, &skin);
+                rows.push(Row { pos, icon: Icon::Face(skin), label: (!name.is_empty()).then_some(name) });
+                continue;
+            }
+            let Some(color) = color_of(&kind, false) else { continue };
+            let short = kind.strip_prefix("minecraft:").unwrap_or(&kind).to_owned();
+            let icon = if NO_EGG.contains(&short.as_str()) { Icon::Dot(color) } else { Icon::Egg(short) };
+            let label = self.mobs.iter().find(|m| m.id == id).and_then(|m| m.custom_name.clone()).filter(|n| !n.is_empty());
+            rows.push(Row { pos, icon, label });
+        }
+        rows
+    }
+
+    /// One row on a map at screen position (x, y): its icon centred there and its name small below.
+    pub(super) fn draw_map_icon(&self, batch: &mut HudBatch, row: &Row, x: f32, y: f32, face: f32) {
+        match &row.icon {
+            Icon::Face(skin) => {
+                let mut draws = Vec::new();
+                horizon_client::tab_list::face(&mut draws, skin, (x - face / 2.0).round() as i32, (y - face / 2.0).round() as i32, face as i32, true, false, 0xFFFF_FFFF);
+                horizon_client::hud_layout::paint(batch, &self.gui.atlas, &draws);
+            }
+            Icon::Egg(kind) => {
+                self.draw_item_model(batch, &ItemStack::new(&format!("minecraft:{kind}_spawn_egg"), 1), (x - 8.0).round(), (y - 8.0).round());
+            }
+            Icon::Dot(color) => {
+                self.native_fill(batch, [x - 2.5, y - 2.5, 5.0, 5.0], 0xFF00_0000);
+                self.native_fill(batch, [x - 2.0, y - 2.0, 4.0, 4.0], *color);
+            }
+        }
+        if let Some(name) = &row.label {
+            let below = match row.icon {
+                Icon::Egg(_) => 8.0,
+                _ => face / 2.0 + 1.0,
+            };
+            let w = self.native_text_width(name);
+            self.native_fill(batch, [x - w / 2.0 - 1.0, y + below, w + 2.0, 9.0], 0x6000_0000);
+            self.native_text(batch, name, [(x - w / 2.0).round(), y + below + 1.0], 0x00FF_FFFF, false);
+        }
+    }
+
     /// Markers for the entities around the minimap's centre, as offsets in GUI pixels.
     pub(super) fn map_entity_dots(&self, view: &View, side: f32) -> Vec<Dot> {
-        if !self.settings.belumi.map_entities {
+        if !self.settings.belumi.map_entities || self.map_icons_wanted() {
             return Vec::new();
         }
         let Some(remote) = self.remote.as_ref() else {

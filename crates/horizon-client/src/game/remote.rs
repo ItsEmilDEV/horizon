@@ -7768,6 +7768,13 @@ impl Remote {
             .map(|(id, t)| (self.level_players.contains_key(id), t.position, t.kind.as_str()))
             .collect()
     }
+    /// Every tracked entity with its id, the profile when it is a player, its position and kind.
+    pub(super) fn map_entity_list(&self) -> Vec<(u32, Option<u128>, [f64; 3], String)> {
+        self.entities
+            .iter()
+            .map(|(id, t)| (*id as u32, self.level_players.get(id).copied(), t.position, t.kind.clone()))
+            .collect()
+    }
     pub(super) fn player_positions(&self) -> Vec<(u128, [f64; 3])> {
         self.level_players
             .iter()
