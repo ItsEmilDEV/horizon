@@ -435,6 +435,26 @@ impl Game<'_> {
                 text(&mut draws, &label, 13.0, 3.0, 0x00FF_FFFF);
                 (w, h, empty) = (tw + 16.0, 14.0, !live);
             }
+            "fps" | "ping" | "coords" => {
+                let (label, color) = match p.id.as_str() {
+                    "fps" => {
+                        let f = self.fps.round() as i32;
+                        (format!("{f} FPS"), if f >= 60 { 0x004D_FF6A } else if f >= 30 { 0x00FF_E14D } else { 0x00FF_6B6B })
+                    }
+                    "ping" => match self.belumi_own_ping() {
+                        Some(ms) => (format!("{ms} ms"), if ms <= 80 { 0x004D_FF6A } else if ms <= 160 { 0x00FF_E14D } else { 0x00FF_6B6B }),
+                        None => ("- ms".to_owned(), 0x00AA_B3C6),
+                    },
+                    _ => match self.eye_position() {
+                        Some([x, y, z]) => (format!("{:.0} {:.0} {:.0}", x.floor(), (y - 1.62).floor(), z.floor()), 0x00FF_FFFF),
+                        None => ("- - -".to_owned(), 0x00AA_B3C6),
+                    },
+                };
+                let tw = HudBatch::text_width(&self.gui.atlas, &label);
+                fill(&mut draws, 0.0, 0.0, tw + 8.0, 14.0, 0x9000_0000);
+                text(&mut draws, &label, 4.0, 3.0, color);
+                (w, h, empty) = (tw + 8.0, 14.0, false);
+            }
             _ => {
                 let seconds = p.flag("seconds", false);
                 let now = chrono::Local::now();
@@ -1026,7 +1046,7 @@ impl Game<'_> {
         self.client_button(batch, [bar[0] + 236.0, bar[1] + 3.0, 58.0, 16.0], "Done", None, Act::Close);
         // palette
         let ids = modules::HUD_IDS;
-        let chip_w = 82.0;
+        let chip_w = ((w - 24.0) / ids.len() as f32 - 4.0).clamp(40.0, 82.0);
         let total = ids.len() as f32 * (chip_w + 4.0) - 4.0;
         let x0 = (w - total) / 2.0;
         let py = h - 30.0;

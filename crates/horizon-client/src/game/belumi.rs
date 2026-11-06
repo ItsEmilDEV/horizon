@@ -132,7 +132,7 @@ impl Game<'_> {
         });
     }
 
-    fn belumi_own_ping(&self) -> Option<i32> {
+    pub(super) fn belumi_own_ping(&self) -> Option<i32> {
         let name = self.options.player_name();
         let r = self.remote.as_ref()?;
         r.tab_players

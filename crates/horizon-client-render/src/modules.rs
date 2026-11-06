@@ -8,7 +8,7 @@ use std::{collections::BTreeMap, fs, path::Path};
 pub const FILE: &str = "belumi-modules.toml";
 
 /// The HUD modules, in the order the builder lists them.
-pub const HUD_IDS: [&str; 7] = ["keystrokes", "cps", "armor", "effects", "clock", "rec", "inventory"];
+pub const HUD_IDS: [&str; 10] = ["keystrokes", "cps", "armor", "effects", "clock", "rec", "inventory", "fps", "ping", "coords"];
 
 pub fn hud_title(id: &str) -> &'static str {
     match id {
@@ -19,6 +19,9 @@ pub fn hud_title(id: &str) -> &'static str {
         "clock" => "Clock",
         "rec" => "Recording",
         "inventory" => "Inventory",
+        "fps" => "FPS",
+        "ping" => "Ping",
+        "coords" => "Coordinates",
         _ => "Module",
     }
 }
@@ -252,6 +255,9 @@ fn default_placed(id: &str) -> Placed {
         "effects" => (0.02, 0.2),
         "rec" => (0.5, 0.02),
         "inventory" => (0.98, 0.95),
+        "fps" => (0.02, 0.02),
+        "ping" => (0.02, 0.08),
+        "coords" => (0.02, 0.14),
         _ => (0.98, 0.02),
     };
     Placed { id: id.into(), enabled: false, nx, ny, scale: 1.0, opt: BTreeMap::new(), bg: 100 }
