@@ -117,6 +117,96 @@ impl Waypoints {
     }
 }
 
+const XAERO_COLORS: [u32; 16] = [
+    0x000000, 0x0000AA, 0x00AA00, 0x00AAAA, 0xAA0000, 0xAA00AA, 0xFFAA00, 0xAAAAAA, 0x555555, 0x5555FF, 0x55FF55,
+    0x55FFFF, 0xFF5555, 0xFF55FF, 0xFFFF55, 0xFFFFFF,
+];
+
+/// The dimension a Xaero folder name (`dim%0`, `dim%-1`, `dim%1`) stands for.
+pub fn xaero_dimension(folder: &str) -> Option<&'static str> {
+    match folder.strip_prefix("dim%")? {
+        "0" => Some("minecraft:overworld"),
+        "-1" => Some("minecraft:the_nether"),
+        "1" => Some("minecraft:the_end"),
+        _ => None,
+    }
+}
+
+/// The waypoints of one Xaero file (`waypoint:name:initials:x:y:z:color:disabled:type:set:...`).
+/// Death points (type 1) and lines it cannot read are left out.
+pub fn parse_xaero(text: &str, scope: &str, dimension: &str) -> Vec<Waypoint> {
+    text.lines()
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.trim().split(':').collect();
+            if parts.first() != Some(&"waypoint") || parts.len() < 7 {
+                return None;
+            }
+            let coord = |s: &str| s.parse::<i32>().ok();
+            let x = coord(parts[3])?;
+            let y = if parts[4] == "~" { 64 } else { coord(parts[4])? };
+            let z = coord(parts[5])?;
+            if parts.get(8) == Some(&"1") {
+                return None;
+            }
+            let name = parts[1].replace("^col^", ":");
+            if name.trim().is_empty() {
+                return None;
+            }
+            let color = parts[6].parse::<usize>().ok().and_then(|i| XAERO_COLORS.get(i)).copied().unwrap_or(0xFFFFFF);
+            Some(Waypoint { scope: scope.into(), dimension: dimension.into(), name, x, y, z, color })
+        })
+        .collect()
+}
+
+impl Waypoints {
+    /// Reads Xaero waypoint files from `path` (one file, or a folder searched up to four levels deep),
+    /// takes the dimension from a `dim%N` folder on the way and `fallback` otherwise.
+    /// Returns (added, skipped as already present).
+    pub fn import_xaero(&mut self, path: &Path, scope: &str, fallback: &str) -> Result<(usize, usize), String> {
+        let mut files = Vec::new();
+        collect_files(path, fallback, 0, &mut files);
+        if files.is_empty() {
+            return Err(format!("No waypoint file found at {}.", path.display()));
+        }
+        let (mut added, mut skipped) = (0, 0);
+        for (file, dimension) in files {
+            let Ok(text) = fs::read_to_string(&file) else { continue };
+            for wp in parse_xaero(&text, scope, &dimension) {
+                if self.list.iter().any(|w| w.scope == scope && w.dimension == wp.dimension && w.name.eq_ignore_ascii_case(&wp.name)) {
+                    skipped += 1;
+                } else {
+                    self.list.push(wp);
+                    added += 1;
+                }
+            }
+        }
+        Ok((added, skipped))
+    }
+}
+
+fn collect_files(path: &Path, dimension: &str, depth: usize, out: &mut Vec<(std::path::PathBuf, String)>) {
+    if path.is_file() {
+        out.push((path.to_path_buf(), dimension.to_owned()));
+        return;
+    }
+    if depth > 4 {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(path) else { return };
+    let mut entries: Vec<_> = entries.flatten().collect();
+    entries.sort_by_key(|e| e.file_name());
+    for entry in entries {
+        let p = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if p.is_dir() {
+            let dim = xaero_dimension(&name).unwrap_or(dimension);
+            collect_files(&p, dim, depth + 1, out);
+        } else if name.ends_with(".txt") && name != "config.txt" {
+            out.push((p, dimension.to_owned()));
+        }
+    }
+}
+
 pub fn distance(w: &Waypoint, from: [f64; 3]) -> f64 {
     let dx = f64::from(w.x) + 0.5 - from[0];
     let dy = f64::from(w.y) - from[1];
@@ -184,6 +274,25 @@ mod tests {
         let near = w.nearest("w1", "overworld", [90.0, 64.0, 0.0], 5);
         assert_eq!(near.len(), 2);
         assert_eq!(near[0].0.name, "Mine");
+    }
+
+    #[test]
+    fn xaero_files_import_with_dimension_colour_and_escaped_colons() {
+        let text = "#comment\nsets:gui.xaero_default\nwaypoint:Base:B:10:64:-20:12:false:0:gui.xaero_default:false:0:0:false\nwaypoint:A^col^B:A:1:~:2:4:false:0:gui.xaero_default:false:0:0:false\nwaypoint:gone:G:5:5:5:0:false:1:gui.xaero_default:false:0:0:false\nwaypoint:bad:B:x:1:1:0:false:0:s\n";
+        let list = parse_xaero(text, "w", "minecraft:the_nether");
+        assert_eq!(list.len(), 2);
+        assert_eq!((list[0].name.as_str(), list[0].x, list[0].z, list[0].color), ("Base", 10, -20, 0xFF5555));
+        assert_eq!((list[1].name.as_str(), list[1].y), ("A:B", 64));
+        assert_eq!(xaero_dimension("dim%-1"), Some("minecraft:the_nether"));
+        let mut store = Waypoints::default();
+        let dir = std::env::temp_dir().join(format!("belumi-xaero-{}", std::process::id()));
+        let sub = dir.join("Multiplayer_x").join("dim%1");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(sub.join("mw$default_1.txt"), text).unwrap();
+        assert_eq!(store.import_xaero(&dir, "w", "minecraft:overworld").unwrap(), (2, 0));
+        assert_eq!(store.import_xaero(&dir, "w", "minecraft:overworld").unwrap(), (0, 2));
+        assert!(store.list.iter().all(|w| w.dimension == "minecraft:the_end"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

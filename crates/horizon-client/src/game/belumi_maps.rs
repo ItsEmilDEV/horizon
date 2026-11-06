@@ -90,6 +90,7 @@ pub(super) enum Command {
     Remove(String),
     List,
     Clear,
+    Import(String),
     Bad,
 }
 
@@ -106,6 +107,7 @@ pub(super) fn parse_command(text: &str) -> Option<Command> {
         Some("remove" | "delete") => name.map_or(Command::Bad, Command::Remove),
         Some("list") | None => Command::List,
         Some("clear") => Command::Clear,
+        Some("import") => name.map_or(Command::Bad, Command::Import),
         _ => Command::Bad,
     })
 }
@@ -404,7 +406,16 @@ impl Game<'_> {
                         .join("\n")
                 }
             }
-            Command::Bad => "Usage: /waypoint add [NAME] | remove NAME | list | clear".into(),
+            Command::Import(path) => {
+                let result = self.belumi_waypoint_store().import_xaero(std::path::Path::new(&path), &scope, dim.unwrap_or("minecraft:overworld"));
+                self.belumi_save_waypoints();
+                match result {
+                    Ok((added, 0)) => format!("Imported {added} waypoints from Xaero."),
+                    Ok((added, skipped)) => format!("Imported {added} waypoints from Xaero, {skipped} were already here."),
+                    Err(e) => e,
+                }
+            }
+            Command::Bad => "Usage: /waypoint add [NAME] | remove NAME | list | clear | import XAERO_FOLDER_OR_FILE".into(),
         };
         for line in reply.lines() {
             self.native_chat(line);
@@ -769,7 +780,7 @@ mod tests {
     fn map_zoom_steps_stay_in_range_and_scopes_become_file_names() {
         assert_eq!(zoom_step(2, 1.0), 3);
         assert_eq!(zoom_step(0, -3.0), 0);
-        assert_eq!(zoom_step(5, 1.0), 5);
+        assert_eq!(zoom_step(7, 1.0), 7);
         assert_eq!(safe_name("server:play.example.org:25565"), "server_play.example.org_25565");
         assert!(!safe_name("world:../../x").contains('/'));
     }
