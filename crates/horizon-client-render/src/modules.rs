@@ -183,8 +183,6 @@ pub struct Misc {
     pub freelook: bool,
     pub freelook_key: String,
     pub tooltips: bool,
-    pub auto_reconnect: bool,
-    pub reconnect_seconds: u8,
     pub low_durability_warning: bool,
 }
 
@@ -194,8 +192,6 @@ impl Default for Misc {
             freelook: true,
             freelook_key: "key.keyboard.left.alt".into(),
             tooltips: false,
-            auto_reconnect: false,
-            reconnect_seconds: 5,
             low_durability_warning: true,
         }
     }
@@ -302,7 +298,6 @@ impl Modules {
         self.crosshair.style = self.crosshair.style.min(CROSSHAIR_STYLES.len() as u8 - 1);
         self.replay.clip_seconds = self.replay.clip_seconds.clamp(5, 300);
         self.replay.keep = self.replay.keep.clamp(1, 200);
-        self.misc.reconnect_seconds = self.misc.reconnect_seconds.clamp(1, 60);
     }
 
     pub fn hud_mut(&mut self, id: &str) -> Option<&mut Placed> {
