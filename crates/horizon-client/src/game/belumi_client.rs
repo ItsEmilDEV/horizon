@@ -86,6 +86,8 @@ pub(super) struct ClientState {
     /// Seconds since the last frame, for the fades.
     fade_dt: f32,
     fade_at: Option<std::time::Instant>,
+    /// First visible row of the Modules page.
+    modules_row: usize,
 }
 
 pub(super) struct Freelook {
@@ -642,6 +644,11 @@ impl Game<'_> {
             self.replay_scroll(steps);
             return;
         }
+        if self.belumi_client.page == Page::Modules {
+            let row = &mut self.belumi_client.modules_row;
+            *row = if steps > 0.0 { row.saturating_sub(1) } else { *row + 1 };
+            return;
+        }
         if self.belumi_client.page != Page::Builder {
             return;
         }
@@ -1128,8 +1135,20 @@ impl Game<'_> {
             ("Own name tag".into(), "Your name over you in 3rd person".into(), Some(self.settings.extras.own_name_tag), Act::Extra("own_name_tag"), None),
         ];
         let col_w = (pw - 30.0) / 2.0;
+        let total_rows = cards.len().div_ceil(2);
+        let visible = (((ph - 30.0 - 26.0) / 40.0).floor() as usize).max(1);
+        let first = self.belumi_client.modules_row.min(total_rows.saturating_sub(visible));
+        self.belumi_client.modules_row = first;
+        if total_rows > visible {
+            let note = format!("Wheel: rows {}-{} of {}", first + 1, (first + visible).min(total_rows), total_rows);
+            self.native_text(batch, &note, [x + 10.0, y + ph - 18.0], 0x008A_93A8, false);
+        }
         for (i, (title, sub, state, act, edit)) in cards.into_iter().enumerate() {
-            let (cx, cy) = (x + 10.0 + (i % 2) as f32 * (col_w + 10.0), y + 30.0 + (i / 2) as f32 * 40.0);
+            let row = i / 2;
+            if row < first || row >= first + visible {
+                continue;
+            }
+            let (cx, cy) = (x + 10.0 + (i % 2) as f32 * (col_w + 10.0), y + 30.0 + (row - first) as f32 * 40.0);
             let card = [cx, cy, col_w, 34.0];
             let over = self.hovered(card);
             self.native_fill(batch, card, if over { 0xFF22_2A3B } else { 0xFF1A_2030 });
