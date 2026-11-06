@@ -123,7 +123,7 @@ impl Game<'_> {
         if !self.belumi_free.active {
             return;
         }
-        if self.player.is_none() || !self.settings.belumi.freecam {
+        if self.player.is_none() || (!self.settings.belumi.freecam && !self.belumi_replay_active()) {
             self.belumi_freecam_off();
             return;
         }

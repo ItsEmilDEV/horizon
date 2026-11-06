@@ -373,6 +373,16 @@ impl Game<'_> {
         }
         Ok(())
     }
+    /// Join a replay's server through memory.
+    pub(super) fn connect_replay(
+        &mut self,
+        pipe: horizon_protocol::connection::Pipe,
+        name: &str,
+    ) -> Result<()> {
+        super::world_loading::preload_server_loot(&self.options.resources);
+        self.join_world_rest()?;
+        self.join_server("replay", name, Some(pipe), None)
+    }
     /// Join single player's integrated server through memory.
     pub(super) fn connect_local(
         &mut self,
@@ -418,6 +428,7 @@ impl Game<'_> {
             |a| (a.name.clone(), a.uuid),
         );
         self.server_packs_connect(local.is_none().then_some(address), user);
+        self.belumi_replay_begin(address, name);
         let session = match local {
             Some(pipe) => Session::connect_local(pipe, name, view, lang.clone(), root.clone()),
             None => {
@@ -627,6 +638,7 @@ impl Game<'_> {
         self.item_activation.reset();
         // A world is leaving either way: its icon attempt goes with it.
         self.world_icon = None;
+        self.belumi_replay_end();
         if let Some(mut r) = self.remote.take() {
             r.session.disconnect();
         }
@@ -2127,6 +2139,9 @@ impl Game<'_> {
         match packet {
             C::CustomPayload(p) if self.belumi_voice_channel(&p.channel) => {
                 self.belumi_voice_payload(&p.channel, &p.data);
+            }
+            C::CustomPayload(p) if self.belumi_replay_channel(&p.channel) => {
+                self.belumi_replay_payload(&p.channel, &p.data);
             }
             // ClientCommonPacketListenerImpl.handlePing runs on the game
             // thread, after all preceding packets (especially teleports).

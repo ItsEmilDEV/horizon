@@ -329,7 +329,7 @@ impl Game<'_> {
     }
 
     pub(super) fn belumi_explore(&mut self, dt: f32) {
-        if !self.settings.belumi.worldmap || self.player.is_none() {
+        if !self.settings.belumi.worldmap || self.player.is_none() || self.belumi_replay_active() {
             return;
         }
         let key = (self.belumi_scope(), self.dim.id());

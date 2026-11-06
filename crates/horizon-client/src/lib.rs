@@ -85,6 +85,7 @@ pub mod motion;
 pub mod multiplayer;
 pub mod music;
 pub mod net;
+pub mod replay;
 pub mod nether_portal;
 pub mod no_resources;
 pub mod offline_name;

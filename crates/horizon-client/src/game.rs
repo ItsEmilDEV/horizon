@@ -52,6 +52,7 @@ mod beehives;
 mod belumi;
 mod belumi_diagnose;
 mod belumi_client;
+mod belumi_replay;
 mod belumi_freecam;
 mod belumi_maps;
 mod map_entities;
@@ -2117,6 +2118,7 @@ struct Game<'a> {
     belumi_maps: belumi_maps::MapState,
     belumi_free: belumi_freecam::FreecamState,
     belumi_client: belumi_client::ClientState,
+    belumi_replay: belumi_replay::ReplayState,
     belumi_plugins: belumi_plugins::PluginState,
     belumi_voice: belumi_voice::VoiceState,
     /// Horizon mods (`game/mods.rs`), none running unless turned on.
@@ -15212,6 +15214,7 @@ impl<'a> Game<'a> {
             belumi_maps: Default::default(),
             belumi_free: Default::default(),
             belumi_client: Default::default(),
+            belumi_replay: Default::default(),
             belumi_plugins: Default::default(),
             belumi_voice: Default::default(),
             mods: Default::default(),

@@ -31,6 +31,8 @@ pub(super) enum Page {
     Modules,
     Crosshair,
     Chat,
+    Replays,
+    Replay,
 }
 
 /// What a click on a registered widget does.
@@ -59,6 +61,7 @@ pub(super) enum Act {
     Reconnect,
     Warning,
     Extra(&'static str),
+    Replay(super::belumi_replay::RAct),
 }
 
 #[derive(Default)]
@@ -115,7 +118,7 @@ impl Game<'_> {
         std::env::current_dir().unwrap_or_default()
     }
 
-    fn modules_changed(&mut self) {
+    pub(super) fn modules_changed(&mut self) {
         self.belumi_client.dirty = true;
     }
 
@@ -128,6 +131,7 @@ impl Game<'_> {
 
     /// Writes the layout a moment after it changed (not on every pixel of a drag).
     pub(super) fn modules_tick(&mut self) {
+        self.belumi_replay_tick();
         let tools = self.modules().chat.clone();
         if self.ui.chat.tools != tools {
             self.ui.chat.tools = tools.clone();
@@ -361,6 +365,18 @@ impl Game<'_> {
                 }
                 (w, h) = (width + 6.0, rows_shown as f32 * 18.0 + 4.0);
             }
+            "rec" => {
+                let (label, live) = match self.belumi_recording_text() {
+                    Some(t) => (t, true),
+                    None => ("REC 0:00".to_owned(), false),
+                };
+                let tw = HudBatch::text_width(&self.gui.atlas, &label);
+                fill(&mut draws, 0.0, 0.0, tw + 16.0, 14.0, 0x9000_0000);
+                let blink = (self.started.elapsed().as_millis() / 500) % 2 == 0;
+                fill(&mut draws, 4.0, 4.0, 6.0, 6.0, if live && blink { 0xFFFF_3B3B } else { 0xFF70_2020 });
+                text(&mut draws, &label, 13.0, 3.0, 0x00FF_FFFF);
+                (w, h, empty) = (tw + 16.0, 14.0, !live);
+            }
             _ => {
                 let seconds = p.flag("seconds", false);
                 let now = chrono::Local::now();
@@ -398,6 +414,7 @@ impl Game<'_> {
         if self.belumi_client.modules.is_none() {
             let _ = self.modules();
         }
+        self.belumi_replay_hud(batch, true);
         if self.screen == Screen::BelumiClient || self.ui.hide_gui {
             return;
         }
@@ -442,6 +459,7 @@ impl Game<'_> {
 
     pub(super) fn belumi_client_key(&mut self, key: &str, pressed: bool) {
         self.freelook_key(key, pressed);
+        self.belumi_replay_key(key, pressed);
         let menu_key = self.modules().menu_key.clone();
         if pressed && key == menu_key && self.native_playing() {
             self.client_open();
@@ -450,7 +468,7 @@ impl Game<'_> {
 
     pub(super) fn client_open(&mut self) {
         let _ = self.modules();
-        self.belumi_client.page = Page::Builder;
+        self.belumi_client.page = if self.belumi_replay_active() { Page::Replay } else { Page::Builder };
         self.belumi_client.selected = None;
         self.belumi_client.drag = None;
         self.belumi_client.mouse_down = false;
@@ -532,6 +550,10 @@ impl Game<'_> {
     }
 
     pub(super) fn belumi_client_scroll(&mut self, steps: f64) {
+        if self.belumi_client.page == Page::Replays {
+            self.replay_scroll(steps);
+            return;
+        }
         if self.belumi_client.page != Page::Builder {
             return;
         }
@@ -652,6 +674,9 @@ impl Game<'_> {
             Act::Page(page) => {
                 self.chat_boxes_commit();
                 self.belumi_client.page = page;
+                if page == Page::Replays {
+                    self.replay_page_open();
+                }
                 if page == Page::Chat {
                     let mk = |text: &str| {
                         let mut b = horizon_client::ui::EditBox::new(0.0, 0.0, 0.0, 0.0);
@@ -665,6 +690,7 @@ impl Game<'_> {
                 }
             }
             Act::Close => self.belumi_client_close_screen(),
+            Act::Replay(a) => self.replay_do(a),
             Act::Starter => {
                 self.modules().starter();
                 self.modules_changed();
@@ -792,16 +818,16 @@ impl Game<'_> {
 
     // ---- drawing the screen ----------------------------------------------------------------
 
-    fn reg(&mut self, rect: [f32; 4], act: Act) {
+    pub(super) fn reg(&mut self, rect: [f32; 4], act: Act) {
         self.belumi_client.widgets.push((rect, act));
     }
 
-    fn hovered(&self, r: [f32; 4]) -> bool {
+    pub(super) fn hovered(&self, r: [f32; 4]) -> bool {
         horizon_client::ui::hovered(self.cursor, r[0], r[1], r[2], r[3])
     }
 
     /// A button: `state` is `Some(on)` for a switch. Registered for clicks.
-    fn client_button(&mut self, batch: &mut HudBatch, r: [f32; 4], label: &str, state: Option<bool>, act: Act) {
+    pub(super) fn client_button(&mut self, batch: &mut HudBatch, r: [f32; 4], label: &str, state: Option<bool>, act: Act) {
         let over = self.hovered(r);
         let (base, hover) = match state {
             Some(true) => (ON, ON_HOVER),
@@ -814,7 +840,7 @@ impl Game<'_> {
         self.reg(r, act);
     }
 
-    fn client_accent_button(&mut self, batch: &mut HudBatch, r: [f32; 4], label: &str, act: Act) {
+    pub(super) fn client_accent_button(&mut self, batch: &mut HudBatch, r: [f32; 4], label: &str, act: Act) {
         let over = self.hovered(r);
         self.native_fill(batch, r, if over { ACCENT_HOVER } else { ACCENT });
         let tw = self.native_text_width(label);
@@ -822,7 +848,7 @@ impl Game<'_> {
         self.reg(r, act);
     }
 
-    fn panel(&self, batch: &mut HudBatch, r: [f32; 4], title: &str) {
+    pub(super) fn panel(&self, batch: &mut HudBatch, r: [f32; 4], title: &str) {
         self.native_fill(batch, [r[0] - 1.0, r[1] - 1.0, r[2] + 2.0, r[3] + 2.0], EDGE);
         self.native_fill(batch, r, BG);
         self.native_fill(batch, [r[0], r[1], r[2], 20.0], HEAD);
@@ -839,7 +865,10 @@ impl Game<'_> {
             Page::Modules => self.draw_modules_page(batch, w, h),
             Page::Crosshair => self.draw_crosshair_page(batch, w, h),
             Page::Chat => self.draw_chat_page(batch, w, h),
+            Page::Replays => self.draw_replays_page(batch, w, h),
+            Page::Replay => self.draw_replay_controls_page(batch, w, h),
         }
+        self.belumi_replay_hud(batch, false);
     }
 
     /// While a module is dragged: it follows the pointer, snapped to the edges and its neighbours.
@@ -985,6 +1014,7 @@ impl Game<'_> {
             ("Item tooltips".into(), "Item id and durability numbers".into(), Some(m.misc.tooltips), Act::Tooltips, None),
             ("Break warning".into(), "Flash when gear is low".into(), Some(m.misc.low_durability_warning), Act::Warning, None),
             ("Chat tools".into(), "Time, filter, sound".into(), None, Act::Page(Page::Chat), Some(Page::Chat)),
+            ("Replays and clips".into(), "Record, clip, watch again".into(), Some(m.replay.record), Act::Replay(super::belumi_replay::RAct::Record), Some(Page::Replays)),
             ("Auto-reconnect".into(), "Rejoin a lost server".into(), Some(self.settings.extras.auto_reconnect), Act::Reconnect, None),
             ("Fullbright".into(), "No darkness".into(), Some(self.settings.extras.fullbright), Act::Extra("fullbright"), None),
             ("Mouse tweaks".into(), "Drag and wheel in inventories".into(), Some(self.settings.extras.mouse_tweaks), Act::Extra("mouse_tweaks"), None),

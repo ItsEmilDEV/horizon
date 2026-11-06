@@ -569,6 +569,7 @@ fn run(
         match login::Clientbound::decode(id, &payload).map_err(e)? {
             login::Clientbound::Compression(p) => c.set_compression(p.threshold),
             login::Clientbound::LoginFinished(p) => {
+                crate::replay::record(crate::replay::LOGIN, id, &payload);
                 c.send(&login::Serverbound::LoginAcknowledged(Empty).encode())
                     .map_err(e)?;
                 break p.profile;
@@ -712,6 +713,7 @@ fn receive_play(
         let (id, raw) = compat.clientbound_retarget(State::Play, id, payload);
         let raw = normalize_byte_light(id, raw);
         let payload = compat.clientbound_payload(State::Play, id, &raw);
+        crate::replay::record(crate::replay::PLAY, id, &payload);
         let packet = match play::Clientbound::decode(id, &payload) {
             Ok(p) => p,
             Err(err) => {
@@ -821,6 +823,7 @@ fn configure(
         let (id, payload) = reader.recv().map_err(|e| connection_lost(e, lang))?;
         let id = compat.clientbound_id(State::Configuration, id);
         let payload = compat.clientbound_payload(State::Configuration, id, &payload);
+        crate::replay::record(crate::replay::CONFIG, id, &payload);
         match cfg::Clientbound::decode(id, &payload).map_err(|e| connection_lost(e, lang))? {
             cfg::Clientbound::KeepAlive(k) => reply(cfg::Serverbound::KeepAlive(k))?,
             cfg::Clientbound::CustomPayload(p) if p.channel == crate::content_identity::CHANNEL => {
