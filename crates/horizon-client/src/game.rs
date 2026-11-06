@@ -696,6 +696,8 @@ enum Screen {
     DialogWarning,
     /// WinScreen: the end poem and the credits (game/win.rs).
     Win,
+    /// Belumi's voice chat screen (game/belumi_voice.rs).
+    BelumiVoice,
 }
 struct Mining {
     pos: [i32; 3],
@@ -7006,6 +7008,7 @@ impl Game<'_> {
             Screen::WorldOptions => self.draw_world_options(&mut batch),
             Screen::Friends => self.draw_friends_screen(&mut batch),
             Screen::ServerLinks => self.draw_server_links(&mut batch),
+            Screen::BelumiVoice => self.belumi_voice_draw_screen(&mut batch),
             Screen::ConfirmLink => self.draw_confirm_link(&mut batch),
             Screen::DialogWarning => self.draw_dialog_warning(&mut batch),
             Screen::CommandBlock => self.draw_command_block(&mut batch),
@@ -13255,6 +13258,7 @@ impl Game<'_> {
                 Screen::CommandBlock => self.close_command_block(),
                 Screen::Chat => self.close_chat(),
                 Screen::Win => self.close_win_screen()?,
+                Screen::BelumiVoice => self.belumi_voice_close_screen(),
             },
             KeyCode::Digit1
             | KeyCode::Digit2
@@ -14035,6 +14039,9 @@ impl ApplicationHandler for Game<'_> {
                     if self.screen == Screen::ServerLinks && d != 0.0 {
                         self.server_links_scroll(d);
                     }
+                    if self.screen == Screen::BelumiVoice && d != 0.0 {
+                        self.belumi_voice_scroll(f64::from(d));
+                    }
                     if self.screen == Screen::Advancements {
                         self.advancements_scroll(scaled(raw_x) as f32, d);
                     }
@@ -14231,6 +14238,9 @@ impl ApplicationHandler for Game<'_> {
                         Screen::ServerLinks if pressed && button == MouseButton::Left => {
                             self.server_links_click()?
                         }
+                        Screen::BelumiVoice if pressed && button == MouseButton::Left => {
+                            self.belumi_voice_click()
+                        }
                         Screen::ConfirmLink if pressed && button == MouseButton::Left => {
                             self.confirm_link_click()
                         }
@@ -14391,6 +14401,9 @@ impl ApplicationHandler for Game<'_> {
                 }
                 WindowEvent::KeyboardInput { event, .. } if self.screen == Screen::Win => {
                     self.win_key(&event)?
+                }
+                WindowEvent::KeyboardInput { event, .. } if self.screen == Screen::BelumiVoice => {
+                    self.belumi_voice_screen_key(&event)
                 }
                 WindowEvent::KeyboardInput { event, .. } if self.screen == Screen::CommandBlock => {
                     self.command_block_key(&event)

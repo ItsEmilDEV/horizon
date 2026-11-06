@@ -25,9 +25,11 @@ pub(super) struct VoiceState {
     #[cfg(feature = "belumi-voice")]
     starting: Option<std::sync::mpsc::Receiver<Result<belumi_voice::VoiceClient, String>>>,
     #[cfg(feature = "belumi-voice")]
-    menu: bool,
+    menu_scroll: usize,
     #[cfg(feature = "belumi-voice")]
-    menu_row: usize,
+    boxes: Option<(horizon_client::ui::EditBox, horizon_client::ui::EditBox)>,
+    #[cfg(feature = "belumi-voice")]
+    notice: String,
     #[cfg(feature = "belumi-voice")]
     probe: usize,
     #[cfg(feature = "belumi-voice")]
@@ -142,20 +144,6 @@ mod real {
     use super::*;
     use belumi_voice::groups::{self, Badge, Incoming};
 
-    enum MenuAction {
-        Mute,
-        Deafen,
-        Join(u128),
-        NeedsPassword(String),
-        Leave,
-        Player(u128),
-    }
-
-    struct MenuRow {
-        text: String,
-        color: u32,
-        action: Option<MenuAction>,
-    }
     use belumi_voice::{
         AudioMode, COMPATIBILITY_VERSION, Listener, Mode, REQUEST_SECRET_CHANNEL, SECRET_CHANNEL,
         State, VoiceClient, VoiceSettings, parse_secret, request_secret_payload,
@@ -317,14 +305,11 @@ mod real {
             if !cfg.voice {
                 return;
             }
-            if pressed && key == cfg.voice_menu_key && (self.belumi_voice.menu || (self.native_playing() && self.remote.is_some())) {
-                self.belumi_voice.menu = !self.belumi_voice.menu;
+            if pressed && key == cfg.voice_menu_key && self.native_playing() && self.remote.is_some() {
+                self.voice_open_screen();
                 return;
             }
-            if self.belumi_voice.menu {
-                if pressed {
-                    self.voice_menu_key(key);
-                }
+            if self.screen == crate::game::Screen::BelumiVoice {
                 return;
             }
             if key == cfg.voice_key {
@@ -340,175 +325,6 @@ mod real {
                 let text = if self.belumi_voice.muted { "Microphone muted." } else { "Microphone on." };
                 self.native_chat(text);
             }
-        }
-
-        pub(in crate::game) fn belumi_voice_menu_open(&self) -> bool {
-            self.belumi_voice.menu
-        }
-
-        /// The menu's lines: headers and hints are not selectable, the rest carry what Enter does.
-        fn voice_menu_rows(&self) -> Vec<MenuRow> {
-            const WHITE: u32 = 0xFFFF_FFFF;
-            const GRAY: u32 = 0xFFAA_AAAA;
-            const YELLOW: u32 = 0xFFFF_FF55;
-            const GREEN: u32 = 0xFF55_FF55;
-            const RED: u32 = 0xFFFF_5555;
-            let line = |text: String, color: u32, action: Option<MenuAction>| MenuRow { text, color, action };
-            let on = |b: bool| if b { "on" } else { "off" };
-            let r = &self.belumi_voice.roster;
-            let mut rows = vec![
-                line(format!("Microphone muted: {}", on(self.belumi_voice.muted)), if self.belumi_voice.muted { RED } else { WHITE }, Some(MenuAction::Mute)),
-                line(format!("Deafened: {}", on(self.belumi_voice.deafened)), if self.belumi_voice.deafened { RED } else { WHITE }, Some(MenuAction::Deafen)),
-                line("Groups".into(), YELLOW, None),
-            ];
-            let groups = r.listed_groups();
-            if groups.is_empty() {
-                rows.push(line("No groups yet".into(), GRAY, None));
-            }
-            for g in groups {
-                let mine = r.my_group == Some(g.id);
-                let lock = if g.has_password { ", password" } else { "" };
-                let text = format!("{} ({} in it{lock}){}", g.name, r.members(g.id), if mine { "  <- you" } else { "" });
-                let action = if mine { MenuAction::Leave } else if g.has_password { MenuAction::NeedsPassword(g.name.clone()) } else { MenuAction::Join(g.id) };
-                rows.push(line(text, if mine { GREEN } else { WHITE }, Some(action)));
-            }
-            rows.push(line("New group: /voice group create NAME".into(), GRAY, None));
-            rows.push(line("Players".into(), YELLOW, None));
-            let me = self.voice_me();
-            let mut players: Vec<(String, u128)> = self
-                .remote
-                .as_ref()
-                .map(|r| r.tab_players.iter().map(|(u, p)| (p.name.clone(), *u)).filter(|(_, u)| *u != me).collect())
-                .unwrap_or_default();
-            players.sort_by_key(|(n, _)| n.to_lowercase());
-            if players.is_empty() {
-                rows.push(line("Nobody else is here".into(), GRAY, None));
-            }
-            for (name, uuid) in players {
-                let badge = match r.players.get(&uuid).and_then(|s| s.badge()) {
-                    Some(Badge::Disconnected) => " [no voice chat]",
-                    Some(Badge::FullMuted) => " [deafened]",
-                    Some(Badge::Muted) => " [muted]",
-                    None => "",
-                };
-                let pct = self.voice_percent(uuid);
-                rows.push(line(format!("{name}{badge}   < {pct}% >"), if badge.is_empty() { WHITE } else { GRAY }, Some(MenuAction::Player(uuid))));
-            }
-            rows
-        }
-
-        fn voice_percent(&self, uuid: u128) -> u16 {
-            self.settings.belumi.voice_player_volumes.get(&format!("{uuid:032x}")).copied().unwrap_or(100)
-        }
-
-        fn voice_set_percent(&mut self, uuid: u128, percent: u16) {
-            let key = format!("{uuid:032x}");
-            if percent == 100 {
-                self.settings.belumi.voice_player_volumes.remove(&key);
-            } else {
-                self.settings.belumi.voice_player_volumes.insert(key, percent.min(300));
-            }
-            self.settings.save(&Game::options_path());
-        }
-
-        fn voice_menu_selectable(&self) -> Vec<usize> {
-            self.voice_menu_rows().iter().enumerate().filter(|(_, r)| r.action.is_some()).map(|(i, _)| i).collect()
-        }
-
-        fn voice_menu_move(&mut self, step: i32) {
-            let list = self.voice_menu_selectable();
-            if list.is_empty() {
-                return;
-            }
-            let at = list.iter().position(|i| *i == self.belumi_voice.menu_row).unwrap_or(0) as i32;
-            let next = (at + step).rem_euclid(list.len() as i32) as usize;
-            self.belumi_voice.menu_row = list[next];
-        }
-
-        fn voice_menu_key(&mut self, key: &str) {
-            let rows = self.voice_menu_rows();
-            let action = rows.get(self.belumi_voice.menu_row).and_then(|r| r.action.as_ref());
-            match key {
-                "key.keyboard.escape" => self.belumi_voice.menu = false,
-                "key.keyboard.up" => self.voice_menu_move(-1),
-                "key.keyboard.down" => self.voice_menu_move(1),
-                "key.keyboard.left" | "key.keyboard.right" => {
-                    if let Some(MenuAction::Player(uuid)) = action {
-                        let uuid = *uuid;
-                        let step: i32 = if key.ends_with("left") { -10 } else { 10 };
-                        let next = (i32::from(self.voice_percent(uuid)) + step).clamp(0, 300) as u16;
-                        self.voice_set_percent(uuid, next);
-                    }
-                }
-                "key.keyboard.r" => {
-                    if let Some(MenuAction::Player(uuid)) = action {
-                        let uuid = *uuid;
-                        self.voice_set_percent(uuid, 100);
-                    }
-                }
-                "key.keyboard.enter" | "key.keyboard.space" => match action {
-                    Some(MenuAction::Mute) => self.belumi_voice.muted = !self.belumi_voice.muted,
-                    Some(MenuAction::Deafen) => self.voice_toggle_deafen(),
-                    Some(MenuAction::Join(id)) => {
-                        let id = *id;
-                        self.voice_send(groups::SET_GROUP, groups::join_group(id, None));
-                    }
-                    Some(MenuAction::NeedsPassword(name)) => {
-                        let line = format!("This group has a password: /voice group join \"{name}\" PASSWORD");
-                        self.belumi_voice.menu = false;
-                        self.native_chat(&line);
-                    }
-                    Some(MenuAction::Leave) => self.voice_send(groups::LEAVE_GROUP, groups::leave_group()),
-                    Some(MenuAction::Player(uuid)) => {
-                        let uuid = *uuid;
-                        self.voice_set_percent(uuid, 100);
-                    }
-                    None => {}
-                },
-                _ => {}
-            }
-        }
-
-        pub(in crate::game) fn belumi_voice_wheel(&mut self, steps: f32, claimed: &mut bool) {
-            if !self.belumi_voice.menu || *claimed {
-                return;
-            }
-            self.voice_menu_move(if steps > 0.0 { -1 } else { 1 });
-            *claimed = true;
-        }
-
-        pub(in crate::game) fn belumi_voice_draw_menu(&mut self, batch: &mut horizon_client::hud::HudBatch) {
-            if !self.belumi_voice.menu {
-                return;
-            }
-            if !self.settings.belumi.voice || self.remote.is_none() || self.screen != crate::game::Screen::Playing {
-                self.belumi_voice.menu = false;
-                return;
-            }
-            let rows = self.voice_menu_rows();
-            if rows.get(self.belumi_voice.menu_row).is_none_or(|r| r.action.is_none()) {
-                self.belumi_voice.menu_row = rows.iter().position(|r| r.action.is_some()).unwrap_or(0);
-            }
-            let hint = "Up/Down: pick   Left/Right: volume   Enter: use   R: reset   Esc: close";
-            let mut width = self.native_text_width(hint) + 16.0;
-            for r in &rows {
-                width = width.max(self.native_text_width(&r.text) + 24.0);
-            }
-            let height = rows.len() as f32 * 11.0 + 34.0;
-            let (x, y) = ((batch.width - width) / 2.0, ((batch.height - height) / 2.0).max(4.0));
-            self.native_fill(batch, [0.0, 0.0, batch.width, batch.height], 0x6000_0000);
-            self.belumi_panel(batch, [x, y, width, height]);
-            self.native_text(batch, "Voice chat", [x + 6.0, y + 4.0], 0x00FF_FFFF, true);
-            let mut row_y = y + 18.0;
-            for (i, r) in rows.iter().enumerate() {
-                if i == self.belumi_voice.menu_row && r.action.is_some() {
-                    self.native_fill(batch, [x + 3.0, row_y - 1.0, width - 6.0, 10.0], 0x5055_AA55);
-                }
-                let indent = if r.action.is_some() { 10.0 } else { 6.0 };
-                self.native_text(batch, &r.text, [x + indent, row_y], r.color & 0x00FF_FFFF, true);
-                row_y += 11.0;
-            }
-            self.native_text(batch, hint, [x + 6.0, y + height - 11.0], 0x00AA_AAAA, true);
         }
 
         fn voice_toggle_deafen(&mut self) {
@@ -936,6 +752,484 @@ mod real {
             }
         }
     }
+
+        // ---- the voice screen -------------------------------------------------------------
+
+        const PANEL_W: f32 = 340.0;
+        const ROW_H: f32 = 16.0;
+        const PAD: f32 = 9.0;
+        const NAME_LEN: usize = 24;
+
+        const BG: u32 = 0xF012_1620;
+        const EDGE: u32 = 0xFF2C_3447;
+        const HEAD: u32 = 0xFF1A_2030;
+        const ROW: u32 = 0x3000_0000;
+        const HOVER: u32 = 0x40FF_FFFF;
+        const ACCENT: u32 = 0xFF7B_4DFF;
+        const ACCENT_HOVER: u32 = 0xFF95_6DFF;
+        const BUTTON: u32 = 0xFF2A_3144;
+        const BUTTON_HOVER: u32 = 0xFF3A_4360;
+        const OK: u32 = 0xFF55_E07A;
+        const WARN: u32 = 0xFFF2_C14E;
+        const BAD: u32 = 0xFFF2_6B6B;
+
+        #[derive(Clone)]
+        enum Act {
+            Mute,
+            Deafen,
+            Join(u128),
+            AskPassword(String),
+            Leave,
+            Less(u128),
+            More(u128),
+            Reset(u128),
+            Create,
+            JoinByName,
+        }
+
+        enum Entry {
+            Header(&'static str),
+            Note(&'static str),
+            Group { id: u128, name: String, members: usize, locked: bool, mine: bool },
+            Player { uuid: u128, name: String, badge: &'static str, percent: u16 },
+        }
+
+        struct Frame {
+            panel: [f32; 4],
+            toggles: [[f32; 4]; 2],
+            rows: Vec<(f32, Entry)>,
+            list: [f32; 4],
+            name: [f32; 4],
+            pass: [f32; 4],
+            create: [f32; 4],
+            join: [f32; 4],
+            total: usize,
+            shown: usize,
+            first: usize,
+        }
+
+        impl Game<'_> {
+            fn voice_entries(&self) -> Vec<Entry> {
+                let r = &self.belumi_voice.roster;
+                let mut out = vec![Entry::Header("Groups")];
+                let groups = r.listed_groups();
+                if groups.is_empty() {
+                    out.push(Entry::Note("No groups yet. Make one below."));
+                }
+                for g in groups {
+                    out.push(Entry::Group {
+                        id: g.id,
+                        name: g.name.clone(),
+                        members: r.members(g.id),
+                        locked: g.has_password,
+                        mine: r.my_group == Some(g.id),
+                    });
+                }
+                out.push(Entry::Header("Players"));
+                let me = self.voice_me();
+                let mut players: Vec<(String, u128)> = self
+                    .remote
+                    .as_ref()
+                    .map(|r| r.tab_players.iter().map(|(u, p)| (p.name.clone(), *u)).filter(|(_, u)| *u != me).collect())
+                    .unwrap_or_default();
+                players.sort_by_key(|(n, _)| n.to_lowercase());
+                if players.is_empty() {
+                    out.push(Entry::Note("Nobody else is here."));
+                }
+                for (name, uuid) in players {
+                    let badge = match r.players.get(&uuid).and_then(|s| s.badge()) {
+                        Some(Badge::Disconnected) => "no voice chat",
+                        Some(Badge::FullMuted) => "deafened",
+                        Some(Badge::Muted) => "muted",
+                        None => "",
+                    };
+                    out.push(Entry::Player { uuid, name, badge, percent: self.voice_percent(uuid) });
+                }
+                out
+            }
+
+            fn voice_percent(&self, uuid: u128) -> u16 {
+                self.settings.belumi.voice_player_volumes.get(&format!("{uuid:032x}")).copied().unwrap_or(100)
+            }
+
+            fn voice_set_percent(&mut self, uuid: u128, percent: u16) {
+                let key = format!("{uuid:032x}");
+                if percent == 100 {
+                    self.settings.belumi.voice_player_volumes.remove(&key);
+                } else {
+                    self.settings.belumi.voice_player_volumes.insert(key, percent.min(300));
+                }
+                self.settings.save(&Game::options_path());
+            }
+
+            fn voice_frame_layout(&self, w: f32, h: f32) -> Frame {
+                let panel_h = (h - 12.0).clamp(150.0, 250.0);
+                let (x, y) = ((w - PANEL_W) / 2.0, ((h - panel_h) / 2.0).floor());
+                let inner = PANEL_W - 2.0 * PAD;
+                let half = (inner - 4.0) / 2.0;
+                let toggles = [[x + PAD, y + 26.0, half, 16.0], [x + PAD + half + 4.0, y + 26.0, half, 16.0]];
+                let list_top = y + 48.0;
+                let form_top = y + panel_h - 46.0;
+                let list = [x + 4.0, list_top, PANEL_W - 8.0, form_top - list_top - 2.0];
+                let entries = self.voice_entries();
+                let shown = ((list[3] / ROW_H).floor() as usize).max(1);
+                let first = self.belumi_voice.menu_scroll.min(entries.len().saturating_sub(shown));
+                let rows = entries
+                    .into_iter()
+                    .enumerate()
+                    .skip(first)
+                    .take(shown)
+                    .map(|(i, e)| (list_top + (i - first) as f32 * ROW_H, e))
+                    .collect::<Vec<_>>();
+                let total = self.voice_entries().len();
+                let fy = form_top + 14.0;
+                Frame {
+                    panel: [x, y, PANEL_W, panel_h],
+                    toggles,
+                    rows,
+                    list,
+                    name: [x + PAD, fy, 128.0, 16.0],
+                    pass: [x + PAD + 132.0, fy, 84.0, 16.0],
+                    create: [x + PAD + 220.0, fy, 54.0, 16.0],
+                    join: [x + PAD + 278.0, fy, 44.0, 16.0],
+                    total,
+                    shown,
+                    first,
+                }
+            }
+
+            fn voice_targets(&self, f: &Frame) -> Vec<([f32; 4], Act)> {
+                let mut out = vec![(f.toggles[0], Act::Mute), (f.toggles[1], Act::Deafen), (f.create, Act::Create), (f.join, Act::JoinByName)];
+                let right = f.panel[0] + PANEL_W - PAD;
+                for (y, e) in &f.rows {
+                    match e {
+                        Entry::Group { id, name, locked, mine, .. } => {
+                            let act = if *mine {
+                                Act::Leave
+                            } else if *locked {
+                                Act::AskPassword(name.clone())
+                            } else {
+                                Act::Join(*id)
+                            };
+                            out.push(([right - 44.0, y + 1.0, 44.0, ROW_H - 2.0], act));
+                        }
+                        Entry::Player { uuid, .. } => {
+                            out.push(([right - 72.0, y + 1.0, 14.0, ROW_H - 2.0], Act::Less(*uuid)));
+                            out.push(([right - 56.0, y + 1.0, 28.0, ROW_H - 2.0], Act::Reset(*uuid)));
+                            out.push(([right - 26.0, y + 1.0, 14.0, ROW_H - 2.0], Act::More(*uuid)));
+                        }
+                        _ => {}
+                    }
+                }
+                out
+            }
+
+            fn voice_open_screen(&mut self) {
+                if !self.belumi_voice.boxes.is_some() {
+                    let make = |max: usize| {
+                        let mut b = horizon_client::ui::EditBox::new(0.0, 0.0, 0.0, 0.0);
+                        b.max_length = max;
+                        b.focused = false;
+                        b
+                    };
+                    self.belumi_voice.boxes = Some((make(NAME_LEN), make(NAME_LEN)));
+                }
+                self.belumi_voice.menu_scroll = 0;
+                self.belumi_voice.notice.clear();
+                self.screen = crate::game::Screen::BelumiVoice;
+                self.keys.clear();
+                self.left = false;
+                self.right = false;
+                self.capture(false);
+            }
+
+            pub(in crate::game) fn belumi_voice_close_screen(&mut self) {
+                self.voice_close_screen();
+            }
+
+            fn voice_close_screen(&mut self) {
+                if self.screen == crate::game::Screen::BelumiVoice {
+                    self.screen = crate::game::Screen::Playing;
+                    self.capture(true);
+                }
+            }
+
+            fn voice_submit(&mut self, create: bool) {
+                let Some((name, pass)) = self.belumi_voice.boxes.as_ref().map(|(n, p)| (n.value.trim().to_owned(), p.value.clone())) else {
+                    return;
+                };
+                let password = (!pass.is_empty()).then_some(pass);
+                if name.is_empty() {
+                    self.belumi_voice.notice = "Type a group name first.".into();
+                    return;
+                }
+                if create {
+                    self.voice_send(groups::CREATE_GROUP, groups::create_group(&name, password.as_deref(), 0));
+                    self.belumi_voice.notice = format!("Created {name}.");
+                } else {
+                    match self.belumi_voice.roster.find_group(&name).map(|g| (g.id, g.name.clone(), g.has_password)) {
+                        Some((id, found, locked)) => {
+                            if locked && password.is_none() {
+                                self.belumi_voice.notice = format!("{found} has a password: type it next to the name.");
+                                if let Some((n, p)) = self.belumi_voice.boxes.as_mut() {
+                                    n.focused = false;
+                                    p.focused = true;
+                                }
+                                return;
+                            }
+                            self.voice_send(groups::SET_GROUP, groups::join_group(id, password.as_deref()));
+                            self.belumi_voice.notice = format!("Joining {found}.");
+                        }
+                        None => {
+                            self.belumi_voice.notice = format!("No group matches {name}.");
+                            return;
+                        }
+                    }
+                }
+                if let Some((n, p)) = self.belumi_voice.boxes.as_mut() {
+                    n.set_value("");
+                    p.set_value("");
+                    n.focused = false;
+                    p.focused = false;
+                }
+            }
+
+            fn voice_do(&mut self, act: Act) {
+                match act {
+                    Act::Mute => self.belumi_voice.muted = !self.belumi_voice.muted,
+                    Act::Deafen => self.voice_toggle_deafen_quiet(),
+                    Act::Join(id) => self.voice_send(groups::SET_GROUP, groups::join_group(id, None)),
+                    Act::AskPassword(name) => {
+                        if let Some((n, p)) = self.belumi_voice.boxes.as_mut() {
+                            n.set_value(&name);
+                            n.focused = false;
+                            p.focused = true;
+                        }
+                        self.belumi_voice.notice = format!("Type the password for {name}, then press Join.");
+                    }
+                    Act::Leave => self.voice_send(groups::LEAVE_GROUP, groups::leave_group()),
+                    Act::Less(uuid) => {
+                        let next = self.voice_percent(uuid).saturating_sub(10);
+                        self.voice_set_percent(uuid, next);
+                    }
+                    Act::More(uuid) => {
+                        let next = (self.voice_percent(uuid) + 10).min(300);
+                        self.voice_set_percent(uuid, next);
+                    }
+                    Act::Reset(uuid) => self.voice_set_percent(uuid, 100),
+                    Act::Create => self.voice_submit(true),
+                    Act::JoinByName => self.voice_submit(false),
+                }
+            }
+
+            fn voice_toggle_deafen_quiet(&mut self) {
+                self.belumi_voice.deafened = !self.belumi_voice.deafened;
+            }
+
+            pub(in crate::game) fn belumi_voice_click(&mut self) {
+                let (w, h) = self.gui_size();
+                let frame = self.voice_frame_layout(w, h);
+                let [px, py, pw, ph] = frame.panel;
+                let cursor = self.cursor;
+                if !horizon_client::ui::hovered(cursor, px, py, pw, ph) {
+                    self.voice_close_screen();
+                    return;
+                }
+                if let Some((_, act)) = self
+                    .voice_targets(&frame)
+                    .into_iter()
+                    .find(|(r, _)| horizon_client::ui::hovered(cursor, r[0], r[1], r[2], r[3]))
+                {
+                    self.audio.play_button_click();
+                    self.voice_do(act);
+                    return;
+                }
+                let shift = self.has_shift_down();
+                if let Some((n, p)) = self.belumi_voice.boxes.take() {
+                    let (mut n, mut p) = (n, p);
+                    let over = |r: [f32; 4]| horizon_client::ui::hovered(cursor, r[0], r[1], r[2], r[3]);
+                    n.focused = over(frame.name);
+                    p.focused = over(frame.pass);
+                    if n.focused {
+                        n.click(&self.gui.atlas, cursor.0, shift, false);
+                    }
+                    if p.focused {
+                        p.click(&self.gui.atlas, cursor.0, shift, false);
+                    }
+                    self.belumi_voice.boxes = Some((n, p));
+                }
+            }
+
+            pub(in crate::game) fn belumi_voice_scroll(&mut self, steps: f64) {
+                let total = self.voice_entries().len();
+                let (w, h) = self.gui_size();
+                let shown = self.voice_frame_layout(w, h).shown;
+                let max = total.saturating_sub(shown);
+                let now = self.belumi_voice.menu_scroll as i64 - steps.signum() as i64;
+                self.belumi_voice.menu_scroll = now.clamp(0, max as i64) as usize;
+            }
+
+            pub(in crate::game) fn belumi_voice_screen_key(&mut self, event: &winit::event::KeyEvent) {
+                use winit::{event::ElementState, keyboard::{KeyCode, PhysicalKey}};
+                if event.state != ElementState::Pressed {
+                    return;
+                }
+                let PhysicalKey::Code(key) = event.physical_key else {
+                    return;
+                };
+                let focused = self.belumi_voice.boxes.as_ref().is_some_and(|(n, p)| n.focused || p.focused);
+                match key {
+                    KeyCode::Escape => {
+                        self.voice_close_screen();
+                        return;
+                    }
+                    KeyCode::Enter | KeyCode::NumpadEnter => {
+                        let create = self.belumi_voice.boxes.as_ref().is_some_and(|(n, _)| {
+                            self.belumi_voice.roster.find_group(n.value.trim()).is_none()
+                        });
+                        if focused {
+                            self.voice_submit(create);
+                        }
+                        return;
+                    }
+                    KeyCode::Tab => {
+                        if let Some((n, p)) = self.belumi_voice.boxes.as_mut() {
+                            let to_pass = n.focused;
+                            n.focused = !to_pass;
+                            p.focused = to_pass;
+                        }
+                        return;
+                    }
+                    _ => {}
+                }
+                if !focused {
+                    if horizon_client::keybinds::key_name(key).is_some_and(|k| k == self.settings.belumi.voice_menu_key) {
+                        self.voice_close_screen();
+                    }
+                    return;
+                }
+                let shortcut = self.edit_shortcut(event);
+                let (ctrl, shift) = (self.has_control_down(), self.has_shift_down());
+                let typed = event.text.as_deref().map(str::to_owned);
+                let Some((mut n, mut p)) = self.belumi_voice.boxes.take() else {
+                    return;
+                };
+                {
+                    let target = if n.focused { &mut n } else { &mut p };
+                    if let Some(shortcut) = shortcut {
+                        target.shortcut(shortcut, &mut self.clipboard);
+                    } else if !target.key(key, ctrl, shift)
+                        && let Some(text) = typed
+                    {
+                        target.insert_text(&text);
+                    }
+                }
+                self.belumi_voice.boxes = Some((n, p));
+            }
+
+            fn voice_text_button(&self, batch: &mut horizon_client::hud::HudBatch, r: [f32; 4], label: &str, color: u32, hover_color: u32) {
+                let over = horizon_client::ui::hovered(self.cursor, r[0], r[1], r[2], r[3]);
+                self.native_fill(batch, r, if over { hover_color } else { color });
+                let tw = self.native_text_width(label);
+                self.native_text(batch, label, [r[0] + (r[2] - tw) / 2.0, r[1] + ((r[3] - 8.0) / 2.0).floor()], 0x00FF_FFFF, true);
+            }
+
+            pub(in crate::game) fn belumi_voice_draw_screen(&mut self, batch: &mut horizon_client::hud::HudBatch) {
+                if !self.settings.belumi.voice || self.remote.is_none() {
+                    self.voice_close_screen();
+                    return;
+                }
+                let frame = self.voice_frame_layout(batch.width, batch.height);
+                let [x, y, w, h] = frame.panel;
+                self.native_fill(batch, [0.0, 0.0, batch.width, batch.height], 0x9000_0000);
+                self.native_fill(batch, [x - 1.0, y - 1.0, w + 2.0, h + 2.0], EDGE);
+                self.native_fill(batch, [x, y, w, h], BG);
+                self.native_fill(batch, [x, y, w, 22.0], HEAD);
+                self.native_fill(batch, [x, y + 22.0, w, 1.0], EDGE);
+                self.native_fill(batch, [x, y, 3.0, 22.0], ACCENT);
+                self.native_text(batch, "Voice chat", [x + 10.0, y + 7.0], 0x00FF_FFFF, true);
+                let (dot, status) = match self.belumi_voice.client.as_ref().map(|c| c.state()) {
+                    Some(State::Connected) => (OK, "Connected"),
+                    Some(State::Failed(_)) => (BAD, "Connection lost"),
+                    _ => (WARN, "Connecting"),
+                };
+                let sw = self.native_text_width(status);
+                self.native_fill(batch, [x + w - sw - 22.0, y + 8.0, 6.0, 6.0], dot);
+                self.native_text(batch, status, [x + w - sw - PAD, y + 7.0], 0x00C8_D0E0, true);
+
+                let muted = self.belumi_voice.muted;
+                let deaf = self.belumi_voice.deafened;
+                self.voice_text_button(batch, frame.toggles[0], if muted { "Microphone: muted" } else { "Microphone: on" }, if muted { 0xFF8A_3030 } else { BUTTON }, if muted { 0xFFA8_4040 } else { BUTTON_HOVER });
+                self.voice_text_button(batch, frame.toggles[1], if deaf { "Sound: deafened" } else { "Sound: on" }, if deaf { 0xFF8A_3030 } else { BUTTON }, if deaf { 0xFFA8_4040 } else { BUTTON_HOVER });
+
+                let right = x + w - PAD;
+                for (ry, entry) in &frame.rows {
+                    let ry = *ry;
+                    let over = horizon_client::ui::hovered(self.cursor, frame.list[0], ry, frame.list[2], ROW_H);
+                    match entry {
+                        Entry::Header(text) => {
+                            self.native_text(batch, text, [x + PAD, ry + 4.0], 0x00F2_C14E, true);
+                            self.native_fill(batch, [x + PAD + self.native_text_width(text) + 5.0, ry + 8.0, w - 2.0 * PAD - self.native_text_width(text) - 5.0, 1.0], EDGE);
+                        }
+                        Entry::Note(text) => self.native_text(batch, text, [x + PAD + 4.0, ry + 4.0], 0x008A_93A8, false),
+                        Entry::Group { name, members, locked, mine, .. } => {
+                            self.native_fill(batch, [frame.list[0], ry + 1.0, frame.list[2], ROW_H - 2.0], if over { HOVER } else { ROW });
+                            let label = format!("{name}  ({members})");
+                            self.native_text(batch, &label, [x + PAD + 2.0, ry + 4.0], if *mine { 0x0055_E07A } else { 0x00FF_FFFF }, true);
+                            if *locked {
+                                let lw = self.native_text_width(&label);
+                                self.native_text(batch, "[password]", [x + PAD + 6.0 + lw, ry + 4.0], 0x008A_93A8, false);
+                            }
+                            let (text, color, hover) = if *mine { ("Leave", 0xFF8A_3030, 0xFFA8_4040) } else { ("Join", ACCENT, ACCENT_HOVER) };
+                            self.voice_text_button(batch, [right - 44.0, ry + 1.0, 44.0, ROW_H - 2.0], text, color, hover);
+                        }
+                        Entry::Player { name, badge, percent, .. } => {
+                            self.native_fill(batch, [frame.list[0], ry + 1.0, frame.list[2], ROW_H - 2.0], if over { HOVER } else { ROW });
+                            self.native_text(batch, name, [x + PAD + 2.0, ry + 4.0], 0x00FF_FFFF, true);
+                            if !badge.is_empty() {
+                                let nw = self.native_text_width(name);
+                                self.native_text(batch, badge, [x + PAD + 8.0 + nw, ry + 4.0], 0x00F2_6B6B, false);
+                            }
+                            self.voice_text_button(batch, [right - 72.0, ry + 1.0, 14.0, ROW_H - 2.0], "-", BUTTON, BUTTON_HOVER);
+                            self.voice_text_button(batch, [right - 56.0, ry + 1.0, 28.0, ROW_H - 2.0], &format!("{percent}%"), if *percent == 100 { BUTTON } else { 0xFF3A_2F66 }, BUTTON_HOVER);
+                            self.voice_text_button(batch, [right - 26.0, ry + 1.0, 14.0, ROW_H - 2.0], "+", BUTTON, BUTTON_HOVER);
+                        }
+                    }
+                }
+                if frame.first > 0 {
+                    self.native_text(batch, "^", [x + w - 12.0, frame.list[1] - 8.0], 0x008A_93A8, false);
+                }
+                if frame.first + frame.shown < frame.total {
+                    self.native_text(batch, "v", [x + w - 12.0, frame.list[1] + frame.list[3] - 6.0], 0x008A_93A8, false);
+                }
+
+                let form_y = frame.name[1] - 14.0;
+                self.native_fill(batch, [x + PAD, form_y - 2.0, w - 2.0 * PAD, 1.0], EDGE);
+                self.native_text(batch, "Create or join a group", [x + PAD, form_y + 1.0], 0x00F2_C14E, true);
+                let atlas_boxes = self.belumi_voice.boxes.take();
+                if let Some((mut n, mut p)) = atlas_boxes {
+                    [n.x, n.y, n.width, n.height] = frame.name;
+                    [p.x, p.y, p.width, p.height] = frame.pass;
+                    n.draw(batch, &self.gui.atlas, None);
+                    p.draw(batch, &self.gui.atlas, None);
+                    if n.value.is_empty() && !n.focused {
+                        self.native_text(batch, "Group name", [n.text_x(), n.text_y()], 0x0070_7888, false);
+                    }
+                    if p.value.is_empty() && !p.focused {
+                        self.native_text(batch, "Password", [p.text_x(), p.text_y()], 0x0070_7888, false);
+                    }
+                    self.belumi_voice.boxes = Some((n, p));
+                }
+                self.voice_text_button(batch, frame.create, "Create", ACCENT, ACCENT_HOVER);
+                self.voice_text_button(batch, frame.join, "Join", BUTTON, BUTTON_HOVER);
+                let hint = if self.belumi_voice.notice.is_empty() {
+                    "Wheel: scroll   Esc: close".to_owned()
+                } else {
+                    self.belumi_voice.notice.clone()
+                };
+                self.native_text(batch, &hint, [x + PAD, y + h - 11.0], 0x008A_93A8, false);
+            }
+        }
 }
 
 #[cfg(not(feature = "belumi-voice"))]
@@ -959,11 +1253,11 @@ mod stub {
         }
         pub(in crate::game) fn belumi_voice_left(&mut self) {}
         pub(in crate::game) fn belumi_voice_key(&mut self, _key: &str, _pressed: bool) {}
-        pub(in crate::game) fn belumi_voice_menu_open(&self) -> bool {
-            false
-        }
-        pub(in crate::game) fn belumi_voice_wheel(&mut self, _steps: f32, _claimed: &mut bool) {}
-        pub(in crate::game) fn belumi_voice_draw_menu(&mut self, _batch: &mut horizon_client::hud::HudBatch) {}
+        pub(in crate::game) fn belumi_voice_screen_key(&mut self, _event: &winit::event::KeyEvent) {}
+        pub(in crate::game) fn belumi_voice_click(&mut self) {}
+        pub(in crate::game) fn belumi_voice_close_screen(&mut self) {}
+        pub(in crate::game) fn belumi_voice_scroll(&mut self, _steps: f64) {}
+        pub(in crate::game) fn belumi_voice_draw_screen(&mut self, _batch: &mut horizon_client::hud::HudBatch) {}
         pub(in crate::game) fn belumi_voice_frame(&mut self, _dt: f32) {}
         pub(in crate::game) fn belumi_voice_panel(
             &self,

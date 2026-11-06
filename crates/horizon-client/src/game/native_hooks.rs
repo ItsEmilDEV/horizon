@@ -350,7 +350,6 @@ impl Game<'_> {
         self.belumi_hud(batch, corners);
         self.belumi_draw_labels(batch);
         self.belumi_draw_worldmap(batch);
-        self.belumi_voice_draw_menu(batch);
     }
     /// A key or mouse button went down or up, by its vanilla name
     /// (`key.keyboard.z`, `key.mouse.left`): keys on any screen (check
@@ -365,7 +364,6 @@ impl Game<'_> {
     pub(super) fn native_wheel(&mut self, steps: f32, claimed: &mut bool) {
         self.belumi_freecam_wheel(steps, claimed);
         self.belumi_map_wheel(steps, claimed);
-        self.belumi_voice_wheel(steps, claimed);
         self.belumi_wheel(steps, claimed);
     }
     /// A command typed or clicked in chat, without its slash, before the
