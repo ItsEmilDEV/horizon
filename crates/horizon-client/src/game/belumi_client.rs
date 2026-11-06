@@ -281,7 +281,11 @@ impl Game<'_> {
             }
             "effects" => {
                 let mut lines: Vec<(String, u32)> = Vec::new();
-                for e in self.potions.effects.list.iter().filter(|e| e.visible) {
+                let mut shown: Vec<_> = self.potions.effects.list.iter().filter(|e| e.visible).collect();
+                // Permanent effects last, the rest by the time they have left.
+                shown.sort_by_key(|e| if e.duration < 0 { i32::MAX } else { e.duration });
+                let blink = (self.started.elapsed().as_millis() / 300) % 2 == 0;
+                for e in shown {
                     let name = horizon_client::lang::get_or(&format!("effect.minecraft.{}", e.id), e.id);
                     let level = match e.amplifier {
                         0 => String::new(),
@@ -293,7 +297,13 @@ impl Game<'_> {
                         let s = e.duration / 20;
                         format!("{}:{:02}", s / 60, s % 60)
                     };
-                    let color = if e.duration >= 0 && e.duration < 200 { 0x00FF_6B6B } else { 0x00FF_FFFF };
+                    let color = if e.duration >= 0 && e.duration < 200 {
+                        if blink { 0x00FF_6B6B } else { 0x00FF_C0C0 }
+                    } else if e.duration >= 0 && e.duration < 600 {
+                        0x00FF_E14D
+                    } else {
+                        0x00FF_FFFF
+                    };
                     lines.push((format!("{name}{level}  {time}"), color));
                 }
                 empty = lines.is_empty();
@@ -378,7 +388,7 @@ impl Game<'_> {
                 fill(&mut draws, 0.0, 0.0, 9.0 * 18.0 + 4.0, 3.0 * 18.0 + 4.0, 0x6000_0000);
                 for row in 0..3 {
                     for col in 0..9 {
-                        fill(&mut draws, 2.0 + col as f32 * 18.0, 2.0 + row as f32 * 18.0, 17.0, 17.0, 0x4000_0000);
+                        fill(&mut draws, 2.0 + col as f32 * 18.0, 2.0 + row as f32 * 18.0, 17.0, 17.0, 0x30FF_FFFF);
                     }
                 }
                 (w, h, empty) = (9.0 * 18.0 + 4.0, 3.0 * 18.0 + 4.0, !any);

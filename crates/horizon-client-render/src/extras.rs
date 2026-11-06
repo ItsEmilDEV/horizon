@@ -111,7 +111,7 @@ pub struct Extras {
     /// Agents may control the game the player starts: it opens its control socket for
     /// horizon-ctl and MCP clients (off by default; an agent's own launch always opens it).
     pub agent_control: bool,
-    /// "Playing Horizon" on the player's Discord profile (`discord_presence`; on by default).
+    /// "Playing Belumi" on the player's Discord profile (`discord_presence`; on by default).
     pub discord_presence: bool,
 }
 impl Default for Extras {

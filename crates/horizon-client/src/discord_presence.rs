@@ -1,10 +1,11 @@
-//! Discord Rich Presence: "Playing Horizon" on the player's Discord profile, with what they are
+//! Discord Rich Presence: "Playing Belumi" on the player's Discord profile, with what they are
 //! doing (docs/native-client.md). A thread of its own talks to the Discord app on this computer
 //! through its local IPC socket (Discord's RPC docs: `discord-ipc-N`, frames of opcode u32 LE +
 //! length u32 LE + JSON). The game only calls [`set`] each frame: a change wakes the thread,
 //! which connects when Discord runs, retries every 15 s when it doesn't, keeps under Discord's
 //! update limit and clears the activity on quit. Nothing is sent with the setting off,
-//! or with `HORIZON_NO_DISCORD=1`.
+//! or with `HORIZON_NO_DISCORD=1` / `BELUMI_NO_DISCORD=1`. Without a Belumi application ID
+//! (`BELUMI_DISCORD_APP_ID` below or in the environment) there is no presence at all.
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
@@ -16,9 +17,18 @@ use serde_json::{Value, json};
 
 use crate::command::args::GameMode;
 
-/// The "Horizon" application on Discord's developer portal (public: it names the game). Its
-/// Rich Presence assets: `horizon`, the logo.
-pub const DISCORD_APP_ID: &str = "1563857609738690560";
+/// Belumi's own application on Discord's developer portal (its ID is public: it names the game).
+/// Empty until the application exists; `BELUMI_DISCORD_APP_ID` in the environment overrides it.
+/// Rich Presence assets to upload there: `belumi`, the logo.
+/// Never put another application's ID here.
+pub const BELUMI_DISCORD_APP_ID: &str = "";
+
+/// The application ID in use, or `None` when none is configured.
+fn app_id() -> Option<String> {
+    let from_env = std::env::var("BELUMI_DISCORD_APP_ID").ok();
+    let id = from_env.as_deref().unwrap_or(BELUMI_DISCORD_APP_ID).trim();
+    (!id.is_empty() && id.bytes().all(|b| b.is_ascii_digit())).then(|| id.to_owned())
+}
 /// Whether the application has the game-mode images (`survival`, `creative`, `adventure`,
 /// `spectator`) beside the logo; it doesn't yet.
 const MODE_IMAGES: bool = false;
@@ -115,6 +125,8 @@ pub fn start(enabled: bool, automated: bool) {
     let fake_discord = std::env::var_os(IPC_DIR_ENV).is_some();
     if THREAD.get().is_some()
         || std::env::var_os("HORIZON_NO_DISCORD").is_some_and(|v| v != "0")
+        || std::env::var_os("BELUMI_NO_DISCORD").is_some_and(|v| v != "0")
+        || (app_id().is_none() && !fake_discord)
         || (automated && !fake_discord)
     {
         return;
@@ -129,7 +141,7 @@ pub fn start(enabled: bool, automated: bool) {
         Ok(handle) => {
             let _ = THREAD.set(handle.thread().clone());
         }
-        Err(e) => log::warn!("Horizon: no Discord presence: {e}"),
+        Err(e) => log::warn!("Belumi: no Discord presence: {e}"),
     }
 }
 
@@ -216,7 +228,7 @@ fn run() {
         match c.set_activity(activity(wanted.status, wanted.since)) {
             Ok(()) => sent = Some((wanted, now)),
             Err(e) => {
-                log::info!("Horizon: Discord presence disconnected ({e})");
+                log::info!("Belumi: Discord presence disconnected ({e})");
                 client = None;
                 sent = None;
             }
@@ -226,7 +238,7 @@ fn run() {
 
 /// The activity Discord shows for `status`; `None` clears it.
 fn activity(status: Status, since: Option<u64>) -> Option<Value> {
-    let mut assets = json!({"large_image": "horizon", "large_text": "Horizon"});
+    let mut assets = json!({"large_image": "belumi", "large_text": "Belumi - Minecraft 26.3"});
     let (details, state, party) = match status {
         Status::Off => return None,
         Status::Menus => ("In the menus", None, None),
@@ -268,7 +280,7 @@ fn activity(status: Status, since: Option<u64>) -> Option<Value> {
     if let Some(players) = party {
         let max = crate::lan::MAX_PLAYERS;
         a["party"] = json!({
-            "id": format!("horizon-{}", std::process::id()),
+            "id": format!("belumi-{}", std::process::id()),
             "size": [players.clamp(1, max), max],
         });
     }
@@ -338,18 +350,18 @@ impl Client {
             };
             match client.handshake() {
                 Ok(()) => {
-                    log::info!("Horizon: connected to Discord for Rich Presence");
+                    log::info!("Belumi: connected to Discord for Rich Presence");
                     Some(client)
                 }
                 Err(e) => {
-                    log::debug!("Horizon: Discord at {} refused: {e}", path.display());
+                    log::debug!("Belumi: Discord at {} refused: {e}", path.display());
                     None
                 }
             }
         })
     }
     fn handshake(&mut self) -> io::Result<()> {
-        let hello = json!({"v": 1, "client_id": DISCORD_APP_ID});
+        let hello = json!({"v": 1, "client_id": app_id().unwrap_or_else(|| "0".into())});
         self.pipe.write_all(&encode(HANDSHAKE, &hello))?;
         self.reply(|frame| frame["evt"] == "READY")
     }
@@ -370,7 +382,7 @@ impl Client {
             match read_frame(&mut self.pipe)? {
                 (FRAME, frame) if ours(&frame) => {
                     if frame["evt"] == "ERROR" {
-                        log::info!("Horizon: Discord presence: {}", frame["data"]["message"]);
+                        log::info!("Belumi: Discord presence: {}", frame["data"]["message"]);
                     }
                     return Ok(());
                 }
@@ -518,7 +530,7 @@ mod tests {
         let menus = activity(Status::Menus, None).unwrap();
         assert_eq!(menus["details"], "In the menus");
         assert!(menus.get("state").is_none() && menus.get("timestamps").is_none());
-        assert_eq!(menus["assets"]["large_image"], "horizon");
+        assert_eq!(menus["assets"]["large_image"], "belumi");
 
         let single = activity(world(Play::Singleplayer, Dimension::Nether), Some(1000)).unwrap();
         assert_eq!(single["details"], "Singleplayer");

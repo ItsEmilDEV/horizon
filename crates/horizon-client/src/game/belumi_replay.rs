@@ -115,6 +115,22 @@ impl Game<'_> {
         }
     }
 
+    /// The game is closing: finish the recording's file before the process goes.
+    pub(super) fn belumi_replay_shutdown(&mut self) {
+        if let Some(rec) = self.belumi_replay.recorder.take() {
+            replay::stop();
+            for _ in 0..200 {
+                if rec.finished() {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+        if let Some(p) = self.belumi_replay.playing.take() {
+            p.ctl.stop.store(true, Ordering::Release);
+        }
+    }
+
     pub(super) fn belumi_replay_end(&mut self) {
         self.belumi_replay_stop_recording();
         if let Some(p) = self.belumi_replay.playing.take() {
