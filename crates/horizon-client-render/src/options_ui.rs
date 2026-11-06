@@ -1385,7 +1385,7 @@ impl OptionsUi {
     }
     fn settings_search_active(&self) -> bool {
         self.settings_search.focused
-            && matches!(self.page(), Page::Video | Page::Controls | Page::KeyBinds)
+            && matches!(self.page(), Page::Video | Page::Controls | Page::KeyBinds | Page::Belumi)
     }
     pub fn page(&self) -> Page {
         *self.stack.last().unwrap_or(&Page::Main)
@@ -1449,7 +1449,7 @@ impl OptionsUi {
         self.stack.push(page);
         self.scroll = 0.0;
         self.scrollbar_drag_y = None;
-        if matches!(page, Page::Video | Page::Controls | Page::KeyBinds) {
+        if matches!(page, Page::Video | Page::Controls | Page::KeyBinds | Page::Belumi) {
             self.settings_search.set_value("");
             self.settings_search.focused = false;
         }
@@ -1636,6 +1636,32 @@ impl OptionsUi {
                     }
                 }
                 flush(&mut rows, &mut section);
+                rows
+            }
+            Page::Belumi if !self.settings_search.value.trim().is_empty() => {
+                let query = self.settings_search.value.trim().to_lowercase();
+                let found: Vec<crate::belumi::Item> = (0..crate::belumi::section_names().len())
+                    .flat_map(crate::belumi::section_items)
+                    .filter(|item| item.caption().to_lowercase().contains(&query))
+                    .collect();
+                let mut rows = Vec::new();
+                if !found.is_empty() {
+                    rows.push(Row::Header("Belumi features"));
+                    rows.extend(
+                        found
+                            .chunks(2)
+                            .map(|c| Row::Buttons(self.belumi_button(s, c[0]), c.get(1).map(|&b| self.belumi_button(s, b)))),
+                    );
+                }
+                let engine: Vec<Row> = self
+                    .filter_option_rows(self.horizon_rows(s))
+                    .into_iter()
+                    .filter(|row| !matches!(row, Row::Buttons(..)))
+                    .collect();
+                if !engine.is_empty() {
+                    rows.push(Row::Header("Graphics, shaders and engine"));
+                    rows.extend(engine);
+                }
                 rows
             }
             Page::Belumi => {
@@ -1925,7 +1951,7 @@ impl OptionsUi {
         let mut out = Vec::new();
         let page = self.page();
         let cx = (w / 2.0).floor();
-        if matches!(page, Page::Video | Page::Controls | Page::KeyBinds) {
+        if matches!(page, Page::Video | Page::Controls | Page::KeyBinds | Page::Belumi) {
             self.settings_search.x = cx - 100.0;
             self.settings_search.y = 17.0;
         }
@@ -2310,12 +2336,12 @@ impl OptionsUi {
             // Drawn by `pack_screen`.
             Page::Packs => {}
             _ => {
-                if matches!(page, Page::Video | Page::Controls) {
+                if matches!(page, Page::Video | Page::Controls | Page::Belumi) {
                     top = 38.0;
                 }
                 out.push(Widget {
                     x: 0.0,
-                    y: if matches!(page, Page::Video | Page::Controls) {
+                    y: if matches!(page, Page::Video | Page::Controls | Page::Belumi) {
                         4.0
                     } else {
                         12.0
@@ -2687,7 +2713,7 @@ impl OptionsUi {
             }
             self.language_search = search;
         }
-        if matches!(self.page(), Page::Video | Page::Controls | Page::KeyBinds) {
+        if matches!(self.page(), Page::Video | Page::Controls | Page::KeyBinds | Page::Belumi) {
             let mut search = self.settings_search.clone();
             search.draw(batch, atlas, None);
             if search.value.is_empty() && !search.focused {
@@ -2787,7 +2813,7 @@ impl OptionsUi {
         }
         let (widgets, top, bottom, content) = self.layout(s, size.0, size.1);
         let mut events = Vec::new();
-        if !drag && matches!(self.page(), Page::Video | Page::Controls | Page::KeyBinds) {
+        if !drag && matches!(self.page(), Page::Video | Page::Controls | Page::KeyBinds | Page::Belumi) {
             let search = &mut self.settings_search;
             search.focused = ui::hovered((x, y), search.x, search.y, search.width, search.height);
             if search.focused {
@@ -4027,6 +4053,29 @@ mod tests {
             .filter(|w| matches!(w.kind, WKind::Button { act: Act::Belumi(_), .. }))
             .count();
         assert_eq!(items, crate::belumi::section_items(2).len());
+    }
+
+    #[test]
+    fn searching_the_belumi_page_lists_matching_items_from_every_section() {
+        let s = Settings::default();
+        let mut ui = OptionsUi::default();
+        ui.push(Page::Belumi);
+        let first = crate::belumi::section_items(0)[0];
+        let caption = first.caption().to_lowercase();
+        ui.settings_search.set_value(&caption);
+        let (widgets, _, _, _) = ui.layout(&s, 427.0, 600.0);
+        let items: Vec<_> = widgets
+            .iter()
+            .filter_map(|w| match &w.kind {
+                WKind::Button { act: Act::Belumi(item), .. } => Some(*item),
+                _ => None,
+            })
+            .collect();
+        assert!(items.contains(&first));
+        assert!(items.iter().all(|i| i.caption().to_lowercase().contains(&caption)));
+        ui.settings_search.set_value("zzzz-no-such-setting");
+        let (widgets, _, _, _) = ui.layout(&s, 427.0, 600.0);
+        assert!(!widgets.iter().any(|w| matches!(w.kind, WKind::Button { act: Act::Belumi(_), .. })));
     }
 
     #[test]
