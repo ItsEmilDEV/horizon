@@ -87,6 +87,41 @@ impl Default for Crosshair {
     }
 }
 
+/// Ready-made crosshairs: name and how to make it from the player's own (on/off is kept).
+pub const CROSSHAIR_PRESETS: [&str; 5] = ["Classic", "Dot", "Ring", "Tight", "Chevron"];
+
+impl Crosshair {
+    pub fn apply_preset(&mut self, index: usize) {
+        let on = self.enabled;
+        *self = Crosshair::default();
+        self.enabled = on;
+        match index {
+            0 => {}
+            1 => {
+                self.style = 1;
+                self.size = 2;
+                self.color = 0x4DFF6A;
+            }
+            2 => {
+                self.style = 2;
+                self.size = 6;
+                self.color = 0x35E0D0;
+            }
+            3 => {
+                self.size = 4;
+                self.gap = 0;
+                self.color = 0xFFE14D;
+            }
+            _ => {
+                self.style = 4;
+                self.size = 6;
+                self.thickness = 2;
+                self.color = 0xFF3B3B;
+            }
+        }
+    }
+}
+
 pub const CROSSHAIR_STYLES: [&str; 5] = ["Cross", "Dot", "Ring", "Square", "Chevron"];
 pub const CROSSHAIR_COLORS: [u32; 10] = [
     0xFFFFFF, 0xFF3B3B, 0xFF9A2E, 0xFFE14D, 0x4DFF6A, 0x35E0D0, 0x4DA3FF, 0x9B5CFF, 0xFF6AD5, 0x101010,
@@ -463,6 +498,17 @@ mod tests {
         m.hud[0].bg = 250;
         m.repair();
         assert_eq!(m.hud_ref("cps").unwrap().bg, 100);
+    }
+
+    #[test]
+    fn presets_keep_the_switch_and_stay_in_range() {
+        for i in 0..CROSSHAIR_PRESETS.len() {
+            let mut c = Crosshair { enabled: true, ..Crosshair::default() };
+            c.apply_preset(i);
+            assert!(c.enabled);
+            assert!(usize::from(c.style) < CROSSHAIR_STYLES.len());
+            assert!(!c.pieces(0.0).is_empty());
+        }
     }
 
     #[test]

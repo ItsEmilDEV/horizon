@@ -45,6 +45,7 @@ pub(super) enum Act {
     Select(String),
     ScaleDown,
     ScaleUp,
+    Preset(usize),
     BgDown,
     BgUp,
     Flag(String, String),
@@ -799,6 +800,10 @@ impl Game<'_> {
                     self.modules_changed();
                 }
             }
+            Act::Preset(i) => {
+                self.modules().crosshair.apply_preset(i);
+                self.modules_changed();
+            }
             Act::BgDown | Act::BgUp => {
                 let up = act == Act::BgUp;
                 if let Some(id) = self.belumi_client.selected.clone()
@@ -1165,7 +1170,7 @@ impl Game<'_> {
     fn draw_crosshair_page(&mut self, batch: &mut HudBatch, w: f32, h: f32) {
         self.native_fill(batch, [0.0, 0.0, w, h], 0x9000_0000);
         let pw = 360.0_f32.min(w - 12.0);
-        let ph = (h - 16.0).clamp(170.0, 230.0);
+        let ph = (h - 16.0).clamp(196.0, 250.0);
         let (x, y) = ((w - pw) / 2.0, ((h - ph) / 2.0).floor());
         self.panel(batch, [x, y, pw, ph], "Crosshair");
         self.client_button(batch, [x + pw - 54.0, y + 3.0, 48.0, 14.0], "Back", None, Act::Page(Page::Modules));
@@ -1208,6 +1213,11 @@ impl Game<'_> {
             self.reg(r, Act::Colour(*rgb));
         }
         ry += 22.0;
+        self.native_text(batch, "Presets", [cx0, ry + 3.0], 0x00C8_D0E0, true);
+        for (i, name) in modules::CROSSHAIR_PRESETS.iter().enumerate() {
+            self.client_button(batch, [cx0 + 50.0 + i as f32 * 36.0, ry, 34.0, 14.0], name, None, Act::Preset(i));
+        }
+        ry += 20.0;
         self.client_button(batch, [cx0, ry, 62.0, 14.0], "Outline", Some(c.outline), Act::Switch("outline"));
         self.client_button(batch, [cx0 + 66.0, ry, 50.0, 14.0], "Dot", Some(c.dot), Act::Switch("dot"));
         self.client_button(batch, [cx0 + 120.0, ry, 62.0, 14.0], "Dynamic", Some(c.dynamic), Act::Switch("dynamic"));
