@@ -365,6 +365,24 @@ impl Game<'_> {
                 }
                 (w, h) = (width + 6.0, rows_shown as f32 * 18.0 + 4.0);
             }
+            "inventory" => {
+                let mut any = false;
+                for row in 0..3 {
+                    for col in 0..9 {
+                        if let Some(Some(stack)) = self.inventory.get(9 + row * 9 + col) {
+                            items.push((stack.clone(), 3.0 + col as f32 * 18.0, 3.0 + row as f32 * 18.0));
+                            any = true;
+                        }
+                    }
+                }
+                fill(&mut draws, 0.0, 0.0, 9.0 * 18.0 + 4.0, 3.0 * 18.0 + 4.0, 0x6000_0000);
+                for row in 0..3 {
+                    for col in 0..9 {
+                        fill(&mut draws, 2.0 + col as f32 * 18.0, 2.0 + row as f32 * 18.0, 17.0, 17.0, 0x4000_0000);
+                    }
+                }
+                (w, h, empty) = (9.0 * 18.0 + 4.0, 3.0 * 18.0 + 4.0, !any);
+            }
             "rec" => {
                 let (label, live) = match self.belumi_recording_text() {
                     Some(t) => (t, true),
@@ -395,7 +413,7 @@ impl Game<'_> {
     }
 
     fn module_scale(p: &Placed) -> f32 {
-        if p.id == "armor" { 1.0 } else { p.scale }
+        if matches!(p.id.as_str(), "armor" | "inventory") { 1.0 } else { p.scale }
     }
 
     /// Draws one built module at its place. `outline`: a frame around it (the builder's).
@@ -559,7 +577,7 @@ impl Game<'_> {
         }
         if let Some(id) = self.belumi_client.selected.clone()
             && let Some(m) = self.modules().hud_mut(&id)
-            && id != "armor"
+            && !matches!(id.as_str(), "armor" | "inventory")
         {
             m.scale = (m.scale + 0.1 * steps.signum() as f32).clamp(0.5, 3.0);
             m.scale = (m.scale * 10.0).round() / 10.0;
@@ -965,7 +983,7 @@ impl Game<'_> {
             && let Some(p) = modules_list.iter().find(|p| p.id == id).cloned()
         {
             let mut row: Vec<(String, Option<bool>, Act, f32)> = Vec::new();
-            if p.id != "armor" {
+            if !matches!(p.id.as_str(), "armor" | "inventory") {
                 row.push(("-".into(), None, Act::ScaleDown, 16.0));
                 row.push((format!("{:.0}%", p.scale * 100.0), None, Act::Select(id.clone()), 34.0));
                 row.push(("+".into(), None, Act::ScaleUp, 16.0));
