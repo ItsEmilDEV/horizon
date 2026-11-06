@@ -157,6 +157,7 @@ pub struct MapEngine {
     pending: FxHashSet<(Kind, (i32, i32))>,
     dirty: bool,
     scanned: Vec<((i32, i32), Tile)>,
+    scanned_cave: Vec<((i32, i32), Tile, i32)>,
     painting: bool,
     generation: u64,
     requested: Option<Want>,
@@ -203,6 +204,7 @@ impl MapEngine {
             pending: FxHashSet::default(),
             dirty: false,
             scanned: Vec::new(),
+            scanned_cave: Vec::new(),
             painting: false,
             generation: 0,
             requested: None,
@@ -222,6 +224,7 @@ impl MapEngine {
         self.pending.clear();
         self.dirty = false;
         self.scanned.clear();
+        self.scanned_cave.clear();
         self.requested = None;
         self.ready = None;
         self.shown = None;
@@ -233,7 +236,8 @@ impl MapEngine {
     pub fn set_record(&mut self, on: bool) {
         if on && !self.record {
             self.surface.clear();
-            self.pending.retain(|(kind, _)| *kind != Kind::Surface);
+            self.cave.clear();
+            self.pending.clear();
         }
         self.record = on;
     }
@@ -259,6 +263,11 @@ impl MapEngine {
     /// The surface tiles scanned since the last call (what the world map keeps).
     pub fn take_scanned(&mut self) -> Vec<((i32, i32), Tile)> {
         std::mem::take(&mut self.scanned)
+    }
+
+    /// The cave tiles scanned since the last call, with the head height they were scanned at.
+    pub fn take_scanned_cave(&mut self) -> Vec<((i32, i32), Tile, i32)> {
+        std::mem::take(&mut self.scanned_cave)
     }
 
     fn send(&self, job: Job) {
@@ -294,8 +303,11 @@ impl MapEngine {
                     if !same {
                         self.dirty = true;
                     }
-                    if self.record && kind == Kind::Surface && !same {
-                        self.scanned.push((key, tile.clone()));
+                    if self.record && !same {
+                        match kind {
+                            Kind::Surface => self.scanned.push((key, tile.clone())),
+                            Kind::Cave => self.scanned_cave.push((key, tile.clone(), head)),
+                        }
                     }
                     map.insert(
                         key,

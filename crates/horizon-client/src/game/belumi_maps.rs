@@ -9,12 +9,26 @@ use std::{path::PathBuf, time::Instant};
 
 const SAVE_EVERY: f32 = 30.0;
 const MAP_ZOOMS: [f32; 8] = [0.125, 0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0];
+const MAX_CAVE_MAPS: usize = 8;
 const DEFAULT_ZOOM: usize = 2;
+
+/// A map layer: the surface, or the cave floor at a height band (`y >> 4`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Layer {
+    Surface,
+    Cave(i32),
+}
 
 pub(super) struct MapState {
     pub(super) server: String,
     waypoints: Option<Waypoints>,
     regions: Option<RegionMap>,
+    /// The cave maps by 16-block height band (a cave floor or the Nether), opened as they are scanned or viewed.
+    caves: std::collections::HashMap<i32, RegionMap>,
+    /// The layer the open map shows when the player picked one; none follows where the player is.
+    layer: Option<Layer>,
+    /// What the painter last drew, so a change repaints.
+    painted: Option<Layer>,
     painter: Painter,
     /// Where the open map is centred; none follows the player.
     centre: Option<(f64, f64)>,
@@ -31,6 +45,9 @@ impl Default for MapState {
             server: String::new(),
             waypoints: None,
             regions: None,
+            caves: Default::default(),
+            layer: None,
+            painted: None,
             painter: Painter::new(),
             centre: None,
             last_draw: None,
@@ -260,6 +277,9 @@ impl Game<'_> {
         self.belumi_maps.loaded_for = None;
         self.belumi_maps.open = false;
         self.belumi_maps.regions = None;
+        self.belumi_maps.caves.clear();
+        self.belumi_maps.layer = None;
+        self.belumi_maps.painted = None;
         self.belumi_maps.painter.reset();
         self.belumi_maps.centre = None;
     }
@@ -284,27 +304,44 @@ impl Game<'_> {
     }
 
     fn belumi_save_map(&mut self, now: bool) {
-        let Some(regions) = self.belumi_maps.regions.as_mut() else {
-            return;
-        };
-        if now {
-            regions.save_now();
-        } else {
-            regions.save_in_background();
+        let maps = self.belumi_maps.regions.iter_mut().chain(self.belumi_maps.caves.values_mut());
+        for regions in maps {
+            if now {
+                regions.save_now();
+            } else {
+                regions.save_in_background();
+            }
         }
     }
 
+    /// The height band (`y >> 4`) of the player's head.
+    fn belumi_head_band(&self) -> Option<i32> {
+        let p = self.player.as_ref()?;
+        Some(((p.position.y + f64::from(p.dimensions.eye_height)).floor() as i32) >> 4)
+    }
+
+    /// The layer the world map shows: the one picked, else where the player is.
+    fn belumi_view_layer(&self) -> Layer {
+        self.belumi_maps.layer.unwrap_or_else(|| match self.belumi_head_band() {
+            Some(band) if self.map_in_cave() => Layer::Cave(band),
+            _ => Layer::Surface,
+        })
+    }
+
     pub(super) fn belumi_explore(&mut self, dt: f32) {
-        if !self.settings.belumi.worldmap || self.player.is_none() || self.dim == Dim::Nether {
+        if !self.settings.belumi.worldmap || self.player.is_none() {
             return;
         }
         let key = (self.belumi_scope(), self.dim.id());
         if self.belumi_maps.loaded_for.as_ref() != Some(&key) {
             self.belumi_save_map(true);
+            self.belumi_maps.caves.clear();
+            self.belumi_maps.layer = None;
+            self.belumi_maps.painted = None;
             self.belumi_maps.regions = Some(RegionMap::open(Self::belumi_map_path(&key.0, key.1)));
             self.belumi_maps.painter.reset();
             self.belumi_maps.centre = None;
-            self.belumi_maps.loaded_for = Some(key);
+            self.belumi_maps.loaded_for = Some(key.clone());
         }
         let scanned = self.extras.engine.take_scanned();
         let open = self.belumi_maps.open;
@@ -312,12 +349,40 @@ impl Game<'_> {
             .player
             .as_ref()
             .map(|p| ((p.position.x.floor() as i32) >> 4, (p.position.z.floor() as i32) >> 4));
+        let caves = self.extras.engine.take_scanned_cave();
+        let base = Self::belumi_map_path(&key.0, key.1);
+        for (chunk, tile, head) in caves {
+            let band = head >> 4;
+            self.belumi_maps
+                .caves
+                .entry(band)
+                .or_insert_with(|| RegionMap::open(base.join(format!("cave-{band}"))))
+                .absorb(vec![(chunk, tile)]);
+        }
         if let Some(regions) = self.belumi_maps.regions.as_mut() {
             regions.absorb(scanned);
-            if let Some(at) = at
-                && !open
-            {
+        }
+        if let Some(at) = at
+            && !open
+        {
+            for regions in self.belumi_maps.regions.iter_mut().chain(self.belumi_maps.caves.values_mut()) {
                 regions.trim(at);
+            }
+        }
+        if self.belumi_maps.caves.len() > MAX_CAVE_MAPS
+            && let Some(here) = self.belumi_head_band()
+        {
+            let far = self
+                .belumi_maps
+                .caves
+                .keys()
+                .copied()
+                .filter(|b| (b - here).abs() > 2)
+                .max_by_key(|b| (b - here).abs());
+            if let Some(far) = far
+                && let Some(mut gone) = self.belumi_maps.caves.remove(&far)
+            {
+                gone.save_now();
             }
         }
         self.belumi_maps.since_save += dt;
@@ -499,10 +564,22 @@ impl Game<'_> {
         let cfg = &self.settings.belumi;
         if cfg.worldmap && key == cfg.worldmap_key && self.native_playing() {
             self.belumi_maps.open = !self.belumi_maps.open;
+            self.belumi_maps.layer = None;
             self.belumi_maps.centre = None;
             self.belumi_maps.last_draw = None;
         } else if key == "key.keyboard.escape" {
             self.belumi_maps.open = false;
+        } else if self.belumi_maps.open && matches!(key, "key.keyboard.page.up" | "key.keyboard.page.down" | "key.keyboard.home" | "key.keyboard.end") {
+            let now = match self.belumi_view_layer() {
+                Layer::Cave(b) => b,
+                Layer::Surface => self.belumi_head_band().unwrap_or(4),
+            };
+            self.belumi_maps.layer = match key {
+                "key.keyboard.page.up" => Some(Layer::Cave(now + 1)),
+                "key.keyboard.page.down" => Some(Layer::Cave(now - 1)),
+                "key.keyboard.home" => Some(Layer::Surface),
+                _ => None,
+            };
         } else if self.belumi_maps.open && key == "key.keyboard.c" {
             self.belumi_maps.centre = None;
         } else if self.belumi_maps.open && key == "key.keyboard.enter" {
@@ -575,11 +652,6 @@ impl Game<'_> {
         let Some(p) = self.native_player() else {
             return;
         };
-        if self.dim == Dim::Nether {
-            batch.fill(&self.gui.atlas, 0.0, 0.0, batch.width, batch.height, rgba(0, 0, 0, 150));
-            self.native_text(batch, "The Nether is not mapped yet.   M: close", [batch.width / 2.0 - 90.0, batch.height / 2.0], 0x00FF_FFFF, true);
-            return;
-        }
         let atlas = &self.gui.atlas;
         let Some(sprite) = atlas.sprites.get(WORLDMAP_SPRITE).copied() else {
             return;
@@ -598,21 +670,35 @@ impl Game<'_> {
             self.belumi_maps.centre = Some((cx + pan.0 * speed, cz + pan.1 * speed));
         }
         let (mx, mz) = self.belumi_maps.centre.unwrap_or((p.x, p.z));
-        let changed = self
-            .belumi_maps
-            .regions
-            .as_mut()
-            .is_some_and(|r| r.take_changed());
+        let view = self.belumi_view_layer();
         let overlay = self.belumi_map_overlay();
-        if let Some(regions) = self.belumi_maps.regions.as_mut() {
-            self.belumi_maps.painter.want(mx, mz, bpp, changed, overlay, |(x0, z0, x1, z1)| {
-                regions.snapshot(
-                    (x0.floor() as i32) >> 4,
-                    (z0.floor() as i32) >> 4,
-                    (x1.floor() as i32) >> 4,
-                    (z1.floor() as i32) >> 4,
-                )
-            });
+        let tiles_here;
+        {
+            let MapState { regions, caves, painter, loaded_for, painted, .. } = &mut self.belumi_maps;
+            if *painted != Some(view) {
+                painter.reset();
+                *painted = Some(view);
+            }
+            let map = match view {
+                Layer::Surface => regions.as_mut(),
+                Layer::Cave(band) => loaded_for.as_ref().map(|(scope, dim)| {
+                    caves
+                        .entry(band)
+                        .or_insert_with(|| RegionMap::open(Self::belumi_map_path(scope, dim).join(format!("cave-{band}"))))
+                }),
+            };
+            tiles_here = map.as_ref().map_or(0, |r| r.tile_count());
+            if let Some(regions) = map {
+                let changed = regions.take_changed();
+                painter.want(mx, mz, bpp, changed, overlay, |(x0, z0, x1, z1)| {
+                    regions.snapshot(
+                        (x0.floor() as i32) >> 4,
+                        (z0.floor() as i32) >> 4,
+                        (x1.floor() as i32) >> 4,
+                        (z1.floor() as i32) >> 4,
+                    )
+                });
+            }
         }
         if let Some(done) = self.belumi_maps.painter.take() {
             let (w, h) = (atlas.width as f32, atlas.height as f32);
@@ -697,15 +783,18 @@ impl Game<'_> {
         batch.fill(&self.gui.atlas, cx + 1.0, cy - 0.5, 4.0, 1.0, 0xFFFF_FFFF);
         batch.fill(&self.gui.atlas, cx - 0.5, cy - 5.0, 1.0, 4.0, 0xFFFF_FFFF);
         batch.fill(&self.gui.atlas, cx - 0.5, cy + 1.0, 1.0, 4.0, 0xFFFF_FFFF);
+        let layer_name = match view {
+            Layer::Surface => "surface".to_owned(),
+            Layer::Cave(b) => format!("below, y {} to {}", b * 16, b * 16 + 15),
+        };
         let title = format!(
-            "World map  {:.0} {:.0}  {} blocks/px",
+            "World map  {:.0} {:.0}  {} blocks/px  ({layer_name})",
             mx, mz, bpp
         );
         self.native_text(batch, &title, [x + 4.0, y + 4.0], 0x00FF_FFFF, true);
-        let help = "Drag: left button  |  Arrows/WASD: move  |  Wheel: zoom  |  C: centre on you  |  B: waypoint here  |  Enter: teleport  |  M: close";
+        let help = "Drag: left button  |  Arrows/WASD: move  |  Wheel: zoom  |  C: centre  |  PgUp/PgDn: layer  |  Home: surface  |  End: follow  |  B: waypoint  |  Enter: teleport  |  M: close";
         self.native_text(batch, help, [x + 4.0, y + side - 12.0], 0x00CC_CCCC, true);
-        let explored = self.belumi_maps.regions.as_ref().is_none_or(|r| r.tile_count() == 0);
-        if explored {
+        if tiles_here == 0 {
             self.native_text(batch, "Explore to fill the map.", [cx - 50.0, cy + 14.0], 0x00AA_AAAA, true);
         }
         let _ = REGION;

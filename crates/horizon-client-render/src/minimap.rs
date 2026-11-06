@@ -189,6 +189,11 @@ impl Tile {
     pub fn surface(&self) -> bool {
         self.layer == Layer::Surface
     }
+    /// The same columns as a stored map tile (the world map keeps cave floors the way it keeps the surface).
+    pub fn into_stored(mut self) -> Self {
+        self.layer = Layer::Surface;
+        self
+    }
     pub fn from_columns(color: [u8; 256], height: [i16; 256], depth: [u8; 256]) -> Self {
         Self {
             color,
@@ -548,6 +553,16 @@ fn ring_offsets(ring: i32) -> impl Iterator<Item = (i32, i32)> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_cave_tile_becomes_a_stored_tile_with_its_columns_intact() {
+        let mut t = Tile::from_columns([7; 256], [60; 256], [0; 256]);
+        t.layer = Layer::Below(70);
+        assert!(!t.surface());
+        let stored = t.into_stored();
+        assert!(stored.surface());
+        assert_eq!((stored.color[0], stored.height[0]), (7, 60));
+    }
+
     use super::*;
     use std::sync::Arc;
 

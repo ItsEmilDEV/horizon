@@ -168,6 +168,11 @@ impl Game<'_> {
     fn minimap_wanted(&self) -> Option<NativeMinimap> {
         self.native_minimap_now()
     }
+    /// The map shows below ground (a cave or the Nether).
+    pub(super) fn map_in_cave(&self) -> bool {
+        self.extras.cave
+    }
+
     /// Once per frame: send new or changed chunks to the map workers, ask for a
     /// canvas when the view needs one, and upload the one a worker finished.
     fn update_minimap(&mut self) {
@@ -231,6 +236,10 @@ impl Game<'_> {
             } else {
                 surface_radius = surface_radius.max(radius);
             }
+        }
+        if cave && world_map {
+            let keep = render.clamp(2, 8);
+            cave_plan = Some(cave_plan.map_or((keep, head), |(r, h)| (r.max(keep), h)));
         }
         if self.dim == Dim::Nether {
             surface_radius = -1;

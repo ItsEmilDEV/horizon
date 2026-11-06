@@ -206,12 +206,10 @@ impl RegionMap {
         }))
     }
 
-    /// Take in scanned surface tiles; only a changed tile marks its region.
+    /// Take in scanned tiles (the surface, or a cave floor for a cave map); only a changed tile marks its region.
     pub fn absorb(&mut self, scanned: Vec<((i32, i32), Tile)>) {
         for (key, tile) in scanned {
-            if !tile.surface() {
-                continue;
-            }
+            let tile = tile.into_stored();
             let region = region_of(key);
             self.load(region);
             self.absent.remove(&region);
