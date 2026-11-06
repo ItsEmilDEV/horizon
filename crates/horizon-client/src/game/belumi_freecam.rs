@@ -56,7 +56,7 @@ impl Game<'_> {
 
     /// The freecam or the open world map has the keys and the mouse: the player stands still.
     pub(super) fn belumi_input_taken(&self) -> bool {
-        self.belumi_free.active || self.belumi_maps.open
+        self.belumi_free.active || self.belumi_maps.open || self.belumi_voice_menu_open()
     }
 
     pub(super) fn belumi_freecam_toggle(&mut self) {

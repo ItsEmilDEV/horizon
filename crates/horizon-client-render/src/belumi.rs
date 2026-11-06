@@ -12,6 +12,7 @@ pub const FREECAM_KEY: &str = "belumi.freecam";
 pub const VOICE_KEY: &str = "belumi.voice";
 pub const VOICE_MUTE_KEY: &str = "belumi.voice_mute";
 pub const VOICE_DEAFEN_KEY: &str = "belumi.voice_deafen";
+pub const VOICE_MENU_KEY: &str = "belumi.voice_menu";
 pub const VOICE_THRESHOLDS: [f32; 4] = [-60.0, -50.0, -40.0, -30.0];
 pub const VOICE_MIC_GAINS: [f32; 4] = [0.5, 1.0, 1.5, 2.0];
 pub const VOICE_VOLUMES: [f32; 4] = [0.5, 1.0, 1.5, 2.0];
@@ -70,6 +71,7 @@ pub struct Belumi {
     pub voice_key: String,
     pub voice_mute_key: String,
     pub voice_deafen_key: String,
+    pub voice_menu_key: String,
     pub voice_threshold: u8,
     pub voice_mic: u8,
     pub voice_volume: u8,
@@ -131,6 +133,7 @@ impl Default for Belumi {
             voice_key: "key.keyboard.v".into(),
             voice_mute_key: "key.keyboard.k".into(),
             voice_deafen_key: "key.keyboard.j".into(),
+            voice_menu_key: "key.keyboard.u".into(),
             voice_threshold: 1,
             voice_mic: 1,
             voice_volume: 1,
@@ -298,6 +301,7 @@ pub enum Item {
     VoiceKey,
     VoiceMuteKey,
     VoiceDeafenKey,
+    VoiceMenuKey,
     VoiceThreshold,
     VoiceMic,
     VoiceVolume,
@@ -486,6 +490,7 @@ const SPECS: &[Spec] = &[
     key!(VoiceKey, "Push-to-talk key", Some(Item::Voice), VOICE_KEY, voice_key),
     key!(VoiceMuteKey, "Mute key", Some(Item::Voice), VOICE_MUTE_KEY, voice_mute_key),
     key!(VoiceDeafenKey, "Deafen key", Some(Item::Voice), VOICE_DEAFEN_KEY, voice_deafen_key),
+    key!(VoiceMenuKey, "Voice menu key", Some(Item::Voice), VOICE_MENU_KEY, voice_menu_key),
     choice!(VoiceThreshold, "Activation level", "How loud you must be to open the microphone in voice activation mode.", Some(Item::Voice), VOICE_THRESHOLD_LABELS, voice_threshold),
     choice!(VoiceMic, "Microphone volume", "Boosts or lowers what you send.", Some(Item::Voice), VOICE_GAIN_LABELS, voice_mic),
     choice!(VoiceVolume, "Voice volume", "How loud other players sound.", Some(Item::Voice), VOICE_GAIN_LABELS, voice_volume),
@@ -537,7 +542,7 @@ pub fn rows() -> Vec<Result<Item, &'static str>> {
         ("Maps", &[Minimap, MinimapCorner, MinimapSize, MinimapZoom, MinimapRotate, MinimapRound, MapEntities, MapGrid, MapSlime, Worldmap, WorldmapKey]),
         ("Waypoints", &[Waypoints, WaypointKey, WaypointList, WaypointLabels]),
         ("Screen effects", &[Effects, FxVignette, FxSaturation, FxContrast, FxWarmth, FxSharpen, FxGrain]),
-        ("Voice chat", &[Voice, VoiceMode, VoiceKey, VoiceMuteKey, VoiceDeafenKey, VoiceThreshold, VoiceMic, VoiceVolume, VoiceDevice]),
+        ("Voice chat", &[Voice, VoiceMode, VoiceKey, VoiceMuteKey, VoiceDeafenKey, VoiceMenuKey, VoiceThreshold, VoiceMic, VoiceVolume, VoiceDevice]),
         ("Plugins", &[Plugins, PluginCorner]),
         ("Camera", &[Freecam, FreecamKey, FreecamSpeed]),
         ("Debug", &[Inspector, InspectorKey, InspectorCorner]),
