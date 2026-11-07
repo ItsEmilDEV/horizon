@@ -682,27 +682,22 @@ mod real {
             if !self.settings.belumi.voice || self.belumi_voice.roster.players.is_empty() || !self.camera_type.first_person() {
                 return;
             }
-            let (Some(p), Some(r)) = (self.player.as_ref(), self.remote.as_ref()) else {
+            if self.player.is_none() || self.remote.is_none() {
                 return;
-            };
-            let eye = [p.position.x, p.position.y + f64::from(p.dimensions.eye_height), p.position.z];
-            let cam = crate::game::belumi_maps::Camera {
-                eye,
-                yaw: self.yaw,
-                pitch: self.pitch,
-                vertical_fov: self.settings.fov.clamp(1.0, 170.0),
-                aspect: batch.width / batch.height.max(1.0),
+            }
+            let Some((cam, bob)) = self.belumi_frame_camera(batch.width / batch.height.max(1.0)) else {
+                return;
             };
             let me = self.voice_me();
             let mut marks: Vec<(f32, f32, &'static str, u32)> = Vec::new();
-            for (uuid, pos) in r.player_positions() {
+            for (uuid, pos) in self.belumi_player_spots() {
                 if uuid == me {
                     continue;
                 }
                 let Some(badge) = self.belumi_voice.roster.players.get(&uuid).and_then(|s| s.badge()) else {
                     continue;
                 };
-                let Some((u, v)) = crate::game::belumi_maps::project(&cam, [pos[0], pos[1] + 2.75, pos[2]]) else {
+                let Some((u, v)) = crate::game::belumi_maps::project_bobbed(&cam, bob, [pos[0], pos[1] + 2.75, pos[2]]) else {
                     continue;
                 };
                 let (label, color) = match badge {
@@ -727,22 +722,17 @@ mod real {
             if speaking.is_empty() || !self.camera_type.first_person() {
                 return;
             }
-            let (Some(p), Some(r)) = (self.player.as_ref(), self.remote.as_ref()) else {
+            if self.player.is_none() || self.remote.is_none() {
+                return;
+            }
+            let Some((cam, bob)) = self.belumi_frame_camera(batch.width / batch.height.max(1.0)) else {
                 return;
             };
-            let eye = [p.position.x, p.position.y + f64::from(p.dimensions.eye_height), p.position.z];
-            let cam = crate::game::belumi_maps::Camera {
-                eye,
-                yaw: self.yaw,
-                pitch: self.pitch,
-                vertical_fov: self.settings.fov.clamp(1.0, 170.0),
-                aspect: batch.width / batch.height.max(1.0),
-            };
-            let spots: Vec<(f32, f32)> = r
-                .player_positions()
+            let spots: Vec<(f32, f32)> = self
+                .belumi_player_spots()
                 .into_iter()
                 .filter(|(u, _)| speaking.contains(u))
-                .filter_map(|(_, pos)| crate::game::belumi_maps::project(&cam, [pos[0], pos[1] + 2.4, pos[2]]))
+                .filter_map(|(_, pos)| crate::game::belumi_maps::project_bobbed(&cam, bob, [pos[0], pos[1] + 2.4, pos[2]]))
                 .collect();
             for (u, v) in spots {
                 let (x, y) = (u * batch.width, v * batch.height);

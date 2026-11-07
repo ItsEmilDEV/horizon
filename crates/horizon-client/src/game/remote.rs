@@ -211,7 +211,7 @@ pub(super) struct Remote {
     /// Each listed profile's unpacked `textures` property.
     skin_textures: HashMap<u128, horizon_client::skins::Textures>,
     /// The skin texture each profile's players show, once its download is ready.
-    skins: HashMap<u128, String>,
+    pub(super) skins: HashMap<u128, String>,
     listed: std::collections::HashSet<u128>,
     /// `ClientboundLoginPacket.onlineMode`: the player list shows heads.
     online_mode: bool,
@@ -3736,7 +3736,7 @@ impl Game<'_> {
     /// `PlayerInfo.getSkin` for every player entity, including NPCs that are
     /// never in the tab list: resolve each profile's textures and give the
     /// level's player models their skin.
-    fn update_remote_skins(&mut self) {
+    pub(super) fn update_remote_skins(&mut self) {
         let Some(r) = self.remote.as_mut() else {
             return;
         };
@@ -7788,6 +7788,13 @@ impl Remote {
         self.entities
             .iter()
             .map(|(id, t)| (*id as u32, self.level_players.get(id).copied(), t.position, t.kind.clone()))
+            .collect()
+    }
+    /// The level's players, each position passed through `place(entity id, tick position)`.
+    pub(super) fn player_positions_with(&self, place: impl Fn(u32, [f64; 3]) -> [f64; 3]) -> Vec<(u128, [f64; 3])> {
+        self.level_players
+            .iter()
+            .filter_map(|(id, uuid)| Some((*uuid, place(*id as u32, self.entities.get(id)?.position))))
             .collect()
     }
     pub(super) fn player_positions(&self) -> Vec<(u128, [f64; 3])> {

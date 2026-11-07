@@ -80,6 +80,31 @@ pub(super) struct Camera {
     pub(super) aspect: f32,
 }
 
+/// Where `target` lands on the screen when the world is drawn with `bob` (the walking sway, `Mat4::IDENTITY` for none).
+pub(super) fn project_bobbed(cam: &Camera, bob: glam::Mat4, target: [f64; 3]) -> Option<(f32, f32)> {
+    let d = [target[0] - cam.eye[0], target[1] - cam.eye[1], target[2] - cam.eye[2]];
+    let (sy, cy) = f64::from(cam.yaw).to_radians().sin_cos();
+    let (sp, cp) = f64::from(cam.pitch).to_radians().sin_cos();
+    let forward = [-sy * cp, -sp, cy * cp];
+    let right = [-cy, 0.0, -sy];
+    let up = [-sy * sp, cp, cy * sp];
+    let dot = |a: [f64; 3]| a[0] * d[0] + a[1] * d[1] + a[2] * d[2];
+    // View space as the renderer has it (x right, y up, -z ahead), then the sway on top.
+    let p = bob.transform_point3(glam::Vec3::new(dot(right) as f32, dot(up) as f32, -dot(forward) as f32));
+    let z = f64::from(-p.z);
+    if z < 0.5 {
+        return None;
+    }
+    let t = (f64::from(cam.vertical_fov).to_radians() / 2.0).tan();
+    let nx = f64::from(p.x) / (z * t * f64::from(cam.aspect));
+    let ny = f64::from(p.y) / (z * t);
+    if nx.abs() > 1.2 || ny.abs() > 1.2 {
+        return None;
+    }
+    Some((((nx + 1.0) / 2.0) as f32, ((1.0 - ny) / 2.0) as f32))
+}
+
+#[cfg(test)]
 pub(super) fn project(cam: &Camera, target: [f64; 3]) -> Option<(f32, f32)> {
     let d = [target[0] - cam.eye[0], target[1] - cam.eye[1], target[2] - cam.eye[2]];
     let (sy, cy) = f64::from(cam.yaw).to_radians().sin_cos();
@@ -518,6 +543,29 @@ impl Game<'_> {
             .collect()
     }
 
+    /// The camera the last frame was drawn with (interpolated between ticks, with the real field of view and the walking
+    /// sway), for markers that have to stay put in the world. The player's tick position and the plain FOV setting
+    /// make them swim: the tick position moves 20 times a second, the world 60 or more.
+    pub(super) fn belumi_frame_camera(&self, aspect: f32) -> Option<(Camera, glam::Mat4)> {
+        let (eye, yaw, pitch, fov) = self.locator_camera?;
+        Some((Camera { eye, yaw, pitch, vertical_fov: fov.clamp(1.0, 170.0), aspect }, self.locator_bob))
+    }
+
+    /// The players in the level and where they are drawn right now: between their last two tick positions, as the world
+    /// draws them, so a marker over a player does not step 20 times a second.
+    pub(super) fn belumi_player_spots(&self) -> Vec<(u128, [f64; 3])> {
+        let Some(r) = self.remote.as_ref() else {
+            return Vec::new();
+        };
+        let alpha = self.clock.fraction();
+        r.player_positions_with(|id, at| {
+            self.mobs.iter().find(|m| m.id == id).map_or(at, |m| {
+                let (a, b) = (m.previous, m.position);
+                [a.x + (b.x - a.x) * alpha, a.y + (b.y - a.y) * alpha, a.z + (b.z - a.z) * alpha]
+            })
+        })
+    }
+
     pub(super) fn belumi_draw_labels(&mut self, batch: &mut HudBatch) {
         let cfg = &self.settings.belumi;
         if !cfg.waypoints || !cfg.waypoint_labels || !self.camera_type.first_person() {
@@ -527,19 +575,13 @@ impl Game<'_> {
             return;
         };
         let feet = [p.position.x, p.position.y, p.position.z];
-        let eye = [feet[0], feet[1] + f64::from(p.dimensions.eye_height), feet[2]];
-        let zoom = if self.belumi_zoom_active() { self.settings.belumi.zoom_factor() } else { 1.0 };
-        let cam = Camera {
-            eye,
-            yaw: self.yaw,
-            pitch: self.pitch,
-            vertical_fov: (self.settings.fov / zoom).clamp(1.0, 170.0),
-            aspect: batch.width / batch.height.max(1.0),
+        let Some((cam, bob)) = self.belumi_frame_camera(batch.width / batch.height.max(1.0)) else {
+            return;
         };
         let list = self.belumi_visible_waypoints();
         for w in list {
             let target = [f64::from(w.x) + 0.5, f64::from(w.y) + 1.0, f64::from(w.z) + 0.5];
-            let Some((u, v)) = project(&cam, target) else {
+            let Some((u, v)) = project_bobbed(&cam, bob, target) else {
                 continue;
             };
             let dist = waypoints::distance(&w, feet);
@@ -819,10 +861,6 @@ impl Game<'_> {
             axis(held(K::KeyW, K::ArrowUp), held(K::KeyS, K::ArrowDown)),
         )
     }
-
-    pub(super) fn belumi_zoom_active(&self) -> bool {
-        self.belumi.zoom_held()
-    }
 }
 
 #[cfg(test)]
@@ -861,6 +899,37 @@ mod tests {
         let ahead = [-sy * 10.0, -10.0 * 30f64.to_radians().tan(), cy * 10.0];
         let (u, v) = project(&pitched, ahead).unwrap();
         assert!((u - 0.5).abs() < 0.2 && v < 0.6, "{u} {v}");
+    }
+
+    #[test]
+    fn the_sway_free_projection_is_the_plain_one_and_matches_the_renderer_s_view_space() {
+        let cam = Camera { eye: [10.0, 70.0, -4.0], yaw: 35.0, pitch: 12.0, vertical_fov: 80.0, aspect: 16.0 / 9.0 };
+        for target in [[12.0, 71.0, 6.0], [20.0, 68.0, 5.0], [8.0, 75.0, 3.0]] {
+            let (a, b) = (project(&cam, target), project_bobbed(&cam, glam::Mat4::IDENTITY, target));
+            match (a, b) {
+                (Some(a), Some(b)) => assert!((a.0 - b.0).abs() < 1e-4 && (a.1 - b.1).abs() < 1e-4, "{a:?} {b:?}"),
+                (None, None) => {}
+                other => panic!("{other:?}"),
+            }
+        }
+        // The renderer's view matrix turns a world offset into the same view-space coordinates (x right, y up, -z ahead).
+        let d = glam::Vec3::new(2.0, 1.0, 10.0);
+        let view = horizon_client::camera::view_matrix(cam.yaw, cam.pitch).transform_vector3(d);
+        let (sy, cy) = (f64::from(cam.yaw).to_radians().sin(), f64::from(cam.yaw).to_radians().cos());
+        let (sp, cp) = (f64::from(cam.pitch).to_radians().sin(), f64::from(cam.pitch).to_radians().cos());
+        let (x, y, z) = (f64::from(d.x), f64::from(d.y), f64::from(d.z));
+        let mine = [-cy * x - sy * z, (-sy * sp) * x + cp * y + (cy * sp) * z, -((-sy * cp) * x - sp * y + (cy * cp) * z)];
+        for (a, b) in [view.x, view.y, view.z].into_iter().zip(mine) {
+            assert!((f64::from(a) - b).abs() < 1e-3, "{view:?} {mine:?}");
+        }
+    }
+
+    #[test]
+    fn a_sway_moves_the_marker_with_the_world() {
+        let cam = Camera { eye: [0.0; 3], yaw: 0.0, pitch: 0.0, vertical_fov: 70.0, aspect: 16.0 / 9.0 };
+        let still = project_bobbed(&cam, glam::Mat4::IDENTITY, [0.0, 0.0, 10.0]).unwrap();
+        let swayed = project_bobbed(&cam, glam::Mat4::from_translation(glam::Vec3::new(0.2, 0.0, 0.0)), [0.0, 0.0, 10.0]).unwrap();
+        assert!(swayed.0 > still.0, "{still:?} {swayed:?}");
     }
 
     #[test]

@@ -2022,6 +2022,8 @@ struct Game<'a> {
     waypoints: horizon_client::locator_bar::ClientWaypoints,
     /// The camera the last frame drew from (position, yaw, pitch, fov), for the locator bar.
     locator_camera: Option<([f64; 3], f32, f32, f32)>,
+    /// The walking sway the last frame's world was drawn with, for markers that sit in the world.
+    locator_bob: glam::Mat4,
     /// `LocalPlayer.experienceDisplayStartTick`: (last progress, seen a change, tick).
     experience_display: (f32, bool, u64),
     boats: Vec<boats::Boat>,
@@ -12898,6 +12900,7 @@ impl Game<'_> {
         } else {
             self.bob_matrix(camera_alpha as f32)
         };
+        self.locator_bob = bob;
         let spin = if title {
             glam::Mat4::IDENTITY
         } else {
@@ -15143,6 +15146,7 @@ impl<'a> Game<'a> {
             waypoint_styles: prepared.waypoint_styles,
             waypoints: Default::default(),
             locator_camera: None,
+            locator_bob: glam::Mat4::IDENTITY,
             experience_display: Default::default(),
             boats: Vec::new(),
             boat_models: prepared.boat_models,

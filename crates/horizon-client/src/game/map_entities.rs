@@ -109,15 +109,22 @@ impl Game<'_> {
     /// The entities for the player-list view: players with their face and name (always), mobs with their egg
     /// and the name they were given.
     pub(super) fn map_icon_rows(&mut self) -> Vec<Row> {
+        if self.remote.is_none() {
+            return Vec::new();
+        }
+        // The player list resolves the downloaded skins first; the faces here come from the same place, not from the
+        // raw list entries (which only hold the profile's default skin).
+        self.update_remote_skins();
+        let skins = self.remote.as_ref().map(|r| r.skins.clone()).unwrap_or_default();
         let Some(remote) = self.remote.as_ref() else {
             return Vec::new();
         };
         let me = remote.profile();
         let list = remote.map_entity_list();
-        let info: std::collections::HashMap<u128, (String, String)> = remote
+        let info: std::collections::HashMap<u128, String> = remote
             .tab_players
             .iter()
-            .map(|(u, p)| (*u, (p.name.clone(), p.skin.clone())))
+            .map(|(u, p)| (*u, p.name.clone()))
             .collect();
         let mut rows = Vec::new();
         for (id, player, pos, kind) in list {
@@ -125,7 +132,11 @@ impl Game<'_> {
                 if uuid == me {
                     continue;
                 }
-                let (name, skin) = info.get(&uuid).cloned().unwrap_or_default();
+                let name = info.get(&uuid).cloned().unwrap_or_default();
+                let skin = skins
+                    .get(&uuid)
+                    .cloned()
+                    .unwrap_or_else(|| horizon_client::tab_list::default_skin(uuid).to_owned());
                 let skin = self.face_skin(uuid, &skin);
                 rows.push(Row { pos, icon: Icon::Face(skin), label: (!name.is_empty()).then_some(name) });
                 continue;

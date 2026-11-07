@@ -35,12 +35,6 @@ pub(super) fn zoom_after_wheel(current: f32, steps: f32) -> f32 {
     (current * 1.15_f32.powf(steps)).clamp(ZOOM_MIN, ZOOM_MAX)
 }
 
-impl BelumiState {
-    pub(super) fn zoom_held(&self) -> bool {
-        self.zoom_held
-    }
-}
-
 impl Game<'_> {
     pub(super) fn belumi_effects(&mut self) {
         let cfg = &self.settings.belumi;
