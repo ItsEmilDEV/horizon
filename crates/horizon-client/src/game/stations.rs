@@ -2230,7 +2230,7 @@ impl Game<'_> {
         let lines = Self::resolved(lines);
         let atlas = &self.gui.atlas;
         let (x, y, w, h) =
-            Self::tooltip_geometry(atlas, &lines, (x, y), (batch.width, batch.height), 0.0);
+            Self::tooltip_geometry(atlas, &lines, (x, y), (batch.width, batch.height), 0.0, 0.0);
         Self::tooltip_box(batch, atlas, x, y, w, h);
         Self::tooltip_text(batch, atlas, &lines, x, y);
     }
@@ -2254,12 +2254,13 @@ impl Game<'_> {
         (x, y): (f32, f32),
         (width, height): (f32, f32),
         extra: f32,
+        min_w: f32,
     ) -> (f32, f32, f32, f32) {
         let w = lines
             .iter()
             .map(|(t, _)| atlas.font.width_text(t))
             .fold(0.0, f32::max)
-            .max(if extra > 0.0 { 96.0 } else { 0.0 });
+            .max(min_w);
         let text_h = if lines.len() == 1 {
             8.0
         } else {
@@ -2368,13 +2369,50 @@ impl Game<'_> {
         // The component's height does not depend on where it is drawn, so a
         // probe at the origin gives the box its extra height.
         let probe = horizon_client::bundle::tooltip_layout(self.items(), stack, 0.0, 0.0, 96.0);
-        let extra = probe.as_ref().map_or(0.0, |l| l.height + 2.0);
+        // A shulker box: its slots as a grid under the text.
+        let preview: Option<(usize, Vec<(usize, ItemStack)>)> = (probe.is_none()
+            && self.modules_ref().is_some_and(|m| m.misc.container_preview))
+        .then(|| stack.data())
+        .flatten()
+        .filter(|d| !d.container.is_empty())
+        .map(|d| {
+            let slots: Vec<_> = d.container.iter().map(|(s, it)| (usize::from(*s), it.clone())).collect();
+            let rows = slots.iter().map(|(s, _)| s / 9 + 1).max().unwrap_or(1).min(6);
+            (rows, slots)
+        });
+        let extra = match (&probe, &preview) {
+            (Some(l), _) => l.height + 2.0,
+            (None, Some((rows, _))) => *rows as f32 * 18.0 + 4.0,
+            _ => 0.0,
+        };
+        let min_w = if probe.is_some() {
+            96.0
+        } else if preview.is_some() {
+            9.0 * 18.0 + 2.0
+        } else {
+            0.0
+        };
         let atlas = &self.gui.atlas;
         let (x, y, w, h) =
-            Self::tooltip_geometry(atlas, &lines, (x, y), (batch.width, batch.height), extra);
+            Self::tooltip_geometry(atlas, &lines, (x, y), (batch.width, batch.height), extra, min_w);
         Self::tooltip_box(batch, atlas, x, y, w, h);
         let text_h = h - extra;
         Self::tooltip_text(batch, atlas, &lines, x, y);
+        if let Some((rows, slots)) = preview {
+            let ox = x + ((w - 9.0 * 18.0) / 2.0).floor();
+            let oy = y + text_h + 4.0;
+            for cell in 0..rows * 9 {
+                let (cx, cy) = (ox + (cell % 9) as f32 * 18.0, oy + (cell / 9) as f32 * 18.0);
+                batch.fill(&self.gui.atlas, cx, cy, 17.0, 17.0, 0x30FF_FFFF);
+            }
+            for (slot, item) in slots {
+                if slot / 9 < rows {
+                    let (cx, cy) = (ox + (slot % 9) as f32 * 18.0, oy + (slot / 9) as f32 * 18.0);
+                    self.draw_item(batch, &item, cx + 1.0, cy + 1.0);
+                }
+            }
+            return;
+        }
         let Some(layout) =
             horizon_client::bundle::tooltip_layout(self.items(), stack, x, y + text_h + 2.0, w)
         else {

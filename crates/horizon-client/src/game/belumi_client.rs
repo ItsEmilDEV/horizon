@@ -62,6 +62,7 @@ pub(super) enum Act {
     ChatHistory(i32),
     FocusBox(usize),
     Tooltips,
+    ContainerPreview,
     Reconnect,
     Warning,
     Extra(&'static str),
@@ -907,6 +908,11 @@ impl Game<'_> {
                 m.misc.tooltips = !m.misc.tooltips;
                 self.modules_changed();
             }
+            Act::ContainerPreview => {
+                let m = self.modules();
+                m.misc.container_preview = !m.misc.container_preview;
+                self.modules_changed();
+            }
             Act::Reconnect => {
                 self.settings.extras.auto_reconnect = !self.settings.extras.auto_reconnect;
                 self.settings.save(&Game::options_path());
@@ -1191,6 +1197,7 @@ impl Game<'_> {
             ("Freelook".into(), format!("Hold {}", horizon_client::keybinds::display_name(&m.misc.freelook_key).plain()), Some(m.misc.freelook), Act::Freelook, None),
             ("Crosshair".into(), "Your own shape and colour".into(), Some(m.crosshair.enabled), Act::CrosshairOn, Some(Page::Crosshair)),
             ("Item tooltips".into(), "Item id and durability numbers".into(), Some(m.misc.tooltips), Act::Tooltips, None),
+            ("Shulker preview".into(), "Contents in the tooltip".into(), Some(m.misc.container_preview), Act::ContainerPreview, None),
             ("Break warning".into(), "Flash when gear is low".into(), Some(m.misc.low_durability_warning), Act::Warning, None),
             ("Chat tools".into(), "Time, filter, sound".into(), None, Act::Page(Page::Chat), Some(Page::Chat)),
             ("Replays and clips".into(), "Record, clip, watch again".into(), Some(m.replay.record), Act::Replay(super::belumi_replay::RAct::Record), Some(Page::Replays)),

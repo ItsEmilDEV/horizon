@@ -241,6 +241,8 @@ pub struct Misc {
     pub freelook: bool,
     pub freelook_key: String,
     pub tooltips: bool,
+    /// A shulker box's tooltip shows its contents as a grid.
+    pub container_preview: bool,
     pub low_durability_warning: bool,
 }
 
@@ -250,6 +252,7 @@ impl Default for Misc {
             freelook: true,
             freelook_key: "key.keyboard.left.alt".into(),
             tooltips: false,
+            container_preview: true,
             low_durability_warning: true,
         }
     }
