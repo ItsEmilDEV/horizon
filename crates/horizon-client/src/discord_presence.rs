@@ -30,8 +30,8 @@ fn app_id() -> Option<String> {
     (!id.is_empty() && id.bytes().all(|b| b.is_ascii_digit())).then(|| id.to_owned())
 }
 /// Whether the application has the game-mode images (`survival`, `creative`, `adventure`,
-/// `spectator`) beside the logo; it doesn't yet.
-const MODE_IMAGES: bool = false;
+/// `spectator`) beside the logo; Belumi's application has them.
+const MODE_IMAGES: bool = true;
 /// Points the game at a test's fake Discord (a folder holding `discord-ipc-0`).
 const IPC_DIR_ENV: &str = "HORIZON_DISCORD_IPC_DIR";
 
@@ -537,7 +537,8 @@ mod tests {
         assert_eq!(single["state"], "In the Nether");
         assert_eq!(single["timestamps"]["start"], 1000);
         assert!(single.get("party").is_none());
-        assert!(single["assets"].get("small_image").is_none());
+        assert_eq!(single["assets"]["small_image"], "survival");
+        assert!(menus["assets"].get("small_image").is_none());
 
         let multi = activity(world(Play::Multiplayer, Dimension::End), Some(5)).unwrap();
         assert_eq!(multi["details"], "Multiplayer");
