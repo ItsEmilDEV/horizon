@@ -647,8 +647,8 @@ mod tests {
         assert_eq!(judge_line("buy SPAM now", &tools), (true, None));
         assert_eq!(judge_line("my base is here", &tools), (false, Some(0x00FF_E14D)));
         assert_eq!(judge_line("hello", &tools), (false, None));
-        assert!(mentions("<Alex> hi mcclaudeai!", "McClaudeAI"));
-        assert!(!mentions("<Alex> hi mcclaudeaiX", "McClaudeAI"));
+        assert!(mentions("<Alex> hi mcexample!", "McExample"));
+        assert!(!mentions("<Alex> hi mcexampleX", "McExample"));
         assert!(!mentions("anything", ""));
         assert_eq!(clock_text(3661, true), "01:01:01");
         assert_eq!(clock_text(86399, false), "23:59");
