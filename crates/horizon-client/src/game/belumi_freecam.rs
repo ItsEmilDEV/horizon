@@ -12,6 +12,47 @@ pub(super) struct FreecamState {
     speed: Option<f32>,
     saved: Option<CameraType>,
     anchor: [f64; 3],
+    /// A camera path moves the camera: the keys and the mouse do not.
+    driven: bool,
+}
+
+/// One point of a replay's camera path: where the camera is at `t` ms of the replay.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct PathKey {
+    pub t: u32,
+    pub pos: [f64; 3],
+    pub yaw: f32,
+    pub pitch: f32,
+}
+
+/// The camera on the path at `t`: a smooth curve through the points (Catmull-Rom for the position, the
+/// short way round for the yaw), standing still before the first point and after the last. `keys` is sorted by time.
+pub(super) fn path_pose(keys: &[PathKey], t: u32) -> Option<([f64; 3], f32, f32)> {
+    let (first, last) = (keys.first()?, keys.last()?);
+    if t <= first.t || keys.len() == 1 {
+        return Some((first.pos, first.yaw, first.pitch));
+    }
+    if t >= last.t {
+        return Some((last.pos, last.yaw, last.pitch));
+    }
+    let i = keys.iter().rposition(|k| k.t <= t)?;
+    let (a, b) = (keys[i], keys[i + 1]);
+    let before = if i > 0 { keys[i - 1] } else { a };
+    let after = keys.get(i + 2).copied().unwrap_or(b);
+    let u = f64::from(t - a.t) / f64::from((b.t - a.t).max(1));
+    let (u2, u3) = (u * u, u * u * u);
+    let mut pos = [0.0; 3];
+    for axis in 0..3 {
+        let (p0, p1, p2, p3) = (before.pos[axis], a.pos[axis], b.pos[axis], after.pos[axis]);
+        pos[axis] = 0.5
+            * (2.0 * p1
+                + (p2 - p0) * u
+                + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * u2
+                + (3.0 * p1 - p0 - 3.0 * p2 + p3) * u3);
+    }
+    let turn = (b.yaw - a.yaw + 180.0).rem_euclid(360.0) - 180.0;
+    let eased = (u * u * (3.0 - 2.0 * u)) as f32;
+    Some((pos, a.yaw + turn * eased, a.pitch + (b.pitch - a.pitch) * eased))
 }
 
 pub(super) fn wheel_speed(current: f32, steps: f32) -> f32 {
@@ -77,8 +118,25 @@ impl Game<'_> {
             speed: None,
             saved: Some(self.camera_type),
             anchor,
+            driven: false,
         };
         self.camera_type = CameraType::ThirdPersonBack;
+    }
+
+    /// Where the free camera is, for a camera path point.
+    pub(super) fn belumi_freecam_pose(&self) -> Option<([f64; 3], f32, f32)> {
+        self.belumi_free.active.then(|| (self.belumi_free.pos, self.belumi_free.yaw, self.belumi_free.pitch))
+    }
+
+    /// A camera path puts the camera here (`None` gives it back to the player).
+    pub(super) fn belumi_freecam_drive(&mut self, pose: Option<([f64; 3], f32, f32)>) {
+        let f = &mut self.belumi_free;
+        f.driven = pose.is_some() && f.active;
+        if let (true, Some((pos, yaw, pitch))) = (f.driven, pose) {
+            f.pos = pos;
+            f.yaw = yaw;
+            f.pitch = pitch;
+        }
     }
 
     pub(super) fn belumi_freecam_off(&mut self) {
@@ -103,6 +161,9 @@ impl Game<'_> {
 
     pub(super) fn belumi_freecam_turn(&mut self, xo: f64, yo: f64) {
         let f = &mut self.belumi_free;
+        if f.driven {
+            return;
+        }
         f.yaw += (xo * 0.15) as f32;
         f.pitch = (f.pitch + (yo * 0.15) as f32).clamp(-90.0, 90.0);
     }
@@ -129,6 +190,9 @@ impl Game<'_> {
         }
         if let Some(p) = self.player.as_ref() {
             self.belumi_free.anchor = [p.position.x, p.position.y, p.position.z];
+        }
+        if self.belumi_free.driven {
+            return;
         }
         let held = |g: &mut Self, name: &str| {
             g.native_playing() && g.native_mapping(name).is_some_and(|(down, _)| down)
@@ -178,6 +242,23 @@ mod tests {
         let p = limit([100.0, 70.0, 0.0], [0.0, 64.0, 0.0], 40.0);
         assert!((p[0] - 40.0).abs() < 1e-9 && p[1] == 70.0);
         assert_eq!(limit([3.0, 1.0, 4.0], [0.0; 3], 40.0), [3.0, 1.0, 4.0]);
+    }
+
+    #[test]
+    fn a_camera_path_runs_through_its_points() {
+        let key = |t, x: f64, yaw| PathKey { t, pos: [x, 64.0, 0.0], yaw, pitch: 0.0 };
+        assert_eq!(path_pose(&[], 5), None);
+        let one = [key(1000, 3.0, 20.0)];
+        assert_eq!(path_pose(&one, 0).unwrap().0[0], 3.0);
+        let keys = [key(1000, 0.0, 350.0), key(3000, 10.0, 10.0), key(5000, 20.0, 10.0)];
+        assert_eq!(path_pose(&keys, 500).unwrap().0[0], 0.0, "before the first point");
+        assert_eq!(path_pose(&keys, 9000).unwrap().0[0], 20.0, "after the last point");
+        let at = |t| path_pose(&keys, t).unwrap();
+        assert!((at(1000).0[0]).abs() < 1e-9 && (at(3000).0[0] - 10.0).abs() < 1e-9);
+        assert!(at(2000).0[0] > 0.0 && at(2000).0[0] < 10.0);
+        // 350 to 10 degrees turns 20 degrees through north, not 340 the other way.
+        let yaw = at(2000).1;
+        assert!((yaw - 360.0).abs() < 1.0 || yaw.abs() < 1.0, "{yaw}");
     }
 
     #[test]

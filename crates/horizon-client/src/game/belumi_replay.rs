@@ -54,6 +54,10 @@ pub(super) struct ReplayState {
     entries: Vec<Entry>,
     scroll: usize,
     timeline: [f32; 4],
+    /// The camera path of the running replay, sorted by time (P adds a point).
+    points: Vec<super::belumi_freecam::PathKey>,
+    /// The camera follows the path (O).
+    follow: bool,
 }
 
 fn clock(ms: u32) -> String {
@@ -134,6 +138,8 @@ impl Game<'_> {
 
     pub(super) fn belumi_replay_end(&mut self) {
         self.belumi_replay_stop_recording();
+        self.belumi_replay.points.clear();
+        self.belumi_replay.follow = false;
         if let Some(p) = self.belumi_replay.playing.take() {
             p.ctl.stop.store(true, Ordering::Release);
             if let Some(player) = self.player.as_mut() {
@@ -227,6 +233,9 @@ impl Game<'_> {
             "key.keyboard.right" => self.belumi_replay_jump(if shift { 30_000 } else { 5_000 }),
             "key.keyboard.home" => self.belumi_replay_jump(i64::from(i32::MIN) / 2),
             "key.keyboard.v" => self.belumi_replay_cam(),
+            "key.keyboard.p" => self.belumi_replay_point(),
+            "key.keyboard.o" => self.belumi_replay_follow(),
+            "key.keyboard.backspace" => self.belumi_replay_clear_points(),
             _ => {}
         }
     }
@@ -253,6 +262,47 @@ impl Game<'_> {
         p.ctl.seek.store(to, Ordering::Release);
     }
 
+    /// P: a camera path point where the free camera is, at this moment of the replay.
+    fn belumi_replay_point(&mut self) {
+        let (Some(p), Some((pos, yaw, pitch))) = (self.belumi_replay.playing.as_ref(), self.belumi_freecam_pose()) else {
+            self.toast("Switch to the free camera (V) first");
+            return;
+        };
+        let t = p.ctl.position.load(Ordering::Relaxed);
+        let points = &mut self.belumi_replay.points;
+        // A point within a quarter second of another replaces it.
+        points.retain(|k| k.t.abs_diff(t) > 250);
+        points.push(super::belumi_freecam::PathKey { t, pos, yaw, pitch });
+        points.sort_by_key(|k| k.t);
+        let count = points.len();
+        self.toast(format!("Camera point {count} at {}", clock(t)));
+    }
+
+    /// O: the camera follows the path, or goes back to your hands.
+    fn belumi_replay_follow(&mut self) {
+        if self.belumi_replay.follow {
+            self.belumi_replay.follow = false;
+            self.belumi_freecam_drive(None);
+            self.toast("Camera path stopped");
+        } else if self.belumi_replay.points.len() < 2 {
+            self.toast("Set two or more camera points with P first");
+        } else if !self.belumi_freecam_active() {
+            self.toast("Switch to the free camera (V) first");
+        } else {
+            self.belumi_replay.follow = true;
+            self.toast("Camera path running");
+        }
+    }
+
+    fn belumi_replay_clear_points(&mut self) {
+        self.belumi_replay.points.clear();
+        if self.belumi_replay.follow {
+            self.belumi_replay.follow = false;
+            self.belumi_freecam_drive(None);
+        }
+        self.toast("Camera points cleared");
+    }
+
     fn belumi_replay_cam(&mut self) {
         let Some(p) = self.belumi_replay.playing.as_mut() else {
             return;
@@ -261,6 +311,10 @@ impl Game<'_> {
         let free = p.free_cam;
         if free != self.belumi_freecam_active() {
             self.belumi_freecam_toggle();
+        }
+        if !free && self.belumi_replay.follow {
+            self.belumi_replay.follow = false;
+            self.belumi_freecam_drive(None);
         }
         self.toast(if free { "Free camera" } else { "The player's view" });
     }
@@ -284,6 +338,19 @@ impl Game<'_> {
         if self.belumi_replay.pending.is_some() && self.remote.is_none() && self.integrated.is_none() {
             if let Some((path, start, end, clip)) = self.belumi_replay.pending.take() {
                 self.belumi_replay_connect(path, start, end, clip);
+            }
+        }
+        if self.belumi_replay.follow {
+            let at = self.belumi_replay.playing.as_ref().map(|p| p.ctl.position.load(Ordering::Relaxed));
+            match at {
+                Some(t) if self.belumi_freecam_active() => {
+                    let pose = super::belumi_freecam::path_pose(&self.belumi_replay.points, t);
+                    self.belumi_freecam_drive(pose);
+                }
+                _ => {
+                    self.belumi_replay.follow = false;
+                    self.belumi_freecam_drive(None);
+                }
             }
         }
         let Some(p) = self.belumi_replay.playing.as_mut() else {
@@ -403,10 +470,14 @@ impl Game<'_> {
         }
         let frac = (pos as f32 / dur as f32).clamp(0.0, 1.0);
         self.native_fill(batch, [bar[0], bar[1], bar[2] * frac, 3.0], 0xFF7B_4DFF);
+        for k in &self.belumi_replay.points {
+            let at = bar[0] + bar[2] * (k.t as f32 / dur as f32).clamp(0.0, 1.0);
+            self.native_fill(batch, [at - 1.0, bar[1] - 4.0, 2.0, 4.0], 0xFFFF_E14D);
+        }
         self.native_fill(batch, [bar[0] + bar[2] * frac - 1.0, bar[1] - 2.0, 3.0, 7.0], 0xFFFF_FFFF);
         let label = format!("{} / {}   {}x{}", clock(pos), clock(dur), f64::from(speed) / 1000.0, if paused { "   PAUSED" } else { "" });
         self.native_text(batch, &label, [x + 8.0, y + 3.0], 0x00FF_FFFF, true);
-        let hint = "Space pause  [ ] speed  Arrows seek  V camera";
+        let hint = "Space pause  [ ] speed  Arrows seek  V camera  P point  O path";
         let hw = self.native_text_width(hint);
         if hw + self.native_text_width(&label) + 24.0 < w {
             self.native_text(batch, hint, [x + w - hw - 8.0, y + 3.0], 0x008A_93A8, false);
