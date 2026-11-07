@@ -313,11 +313,13 @@ impl Game<'_> {
                 (w, h, empty) = (tw + 8.0, 14.0, false);
             }
             "effects" => {
-                let mut lines: Vec<(String, u32)> = Vec::new();
-                let mut shown: Vec<_> = self.potions.effects.list.iter().filter(|e| e.visible).collect();
+                let icons = p.flag("icons", true);
+                let ambient = p.flag("ambient", true);
+                let mut shown: Vec<_> = self.potions.effects.list.iter().filter(|e| e.visible && (ambient || !e.ambient)).collect();
                 // Permanent effects last, the rest by the time they have left.
                 shown.sort_by_key(|e| if e.duration < 0 { i32::MAX } else { e.duration });
                 let blink = (self.started.elapsed().as_millis() / 300) % 2 == 0;
+                let mut lines: Vec<(String, u32, String)> = Vec::new();
                 for e in shown {
                     let name = horizon_client::lang::get_or(&format!("effect.minecraft.{}", e.id), e.id);
                     let level = match e.amplifier {
@@ -337,18 +339,34 @@ impl Game<'_> {
                     } else {
                         0x00FF_FFFF
                     };
-                    lines.push((format!("{name}{level}  {time}"), color));
+                    lines.push((format!("{name}{level}  {time}"), color, e.id.to_string()));
                 }
                 empty = lines.is_empty();
                 if empty {
-                    lines.push(("No effects".into(), 0x00AA_B3C6));
+                    lines.push(("No effects".into(), 0x00AA_B3C6, String::new()));
                 }
+                let row = if icons { 12.0 } else { 10.0 };
+                let pad = if icons { 14.0 } else { 0.0 };
                 let tw = lines.iter().map(|l| HudBatch::text_width(&self.gui.atlas, &l.0)).fold(0.0, f32::max);
-                fill(&mut draws, 0.0, 0.0, tw + 8.0, lines.len() as f32 * 10.0 + 4.0, 0x9000_0000);
-                for (i, (line, color)) in lines.iter().enumerate() {
-                    text(&mut draws, line, 4.0, 3.0 + i as f32 * 10.0, *color);
+                let (bw, bh) = (tw + 8.0 + pad, lines.len() as f32 * row + 4.0);
+                fill(&mut draws, 0.0, 0.0, bw, bh, 0x9000_0000);
+                for (i, (line, color, id)) in lines.iter().enumerate() {
+                    let y = 2.0 + i as f32 * row;
+                    if icons && !id.is_empty() {
+                        draws.push(GuiDraw::Sprite {
+                            sprite: std::borrow::Cow::Owned(format!("mob_effect/{id}")),
+                            x: 3,
+                            y: y as i32,
+                            w: 10,
+                            h: 10,
+                            region: None,
+                            color: 0xFFFF_FFFF,
+                            blend: hud_layout::Blend::Textured,
+                        });
+                    }
+                    text(&mut draws, line, 4.0 + pad, y + 1.0, *color);
                 }
-                (w, h) = (tw + 8.0, lines.len() as f32 * 10.0 + 4.0);
+                (w, h) = (bw, bh);
             }
             "armor" => {
                 let slots: Vec<Option<ItemStack>> = vec![
@@ -1087,6 +1105,7 @@ impl Game<'_> {
                 "keystrokes" => &[("mouse", "Mouse", true), ("space", "Space", true)],
                 "cps" => &[("split", "Left | Right", true)],
                 "armor" => &[("numbers", "Numbers", true)],
+                "effects" => &[("icons", "Icons", true), ("ambient", "Beacon", true)],
                 "clock" => &[("seconds", "Seconds", false)],
                 _ => &[],
             };
