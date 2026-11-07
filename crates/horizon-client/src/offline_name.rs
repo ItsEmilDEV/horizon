@@ -17,10 +17,24 @@ pub fn is_valid(name: &str) -> bool {
     crate::lan::conn::valid_name(name)
 }
 
-/// `Player` and five digits (vanilla's default has three: one shared name in a
-/// thousand pairs is too many for a game that keeps it).
+/// Belumi's offline names: a German snack or a monster, then digits so that two players rarely share one
+/// (the LAN host's own profile and every guest need different offline UUIDs). At most 16 characters.
+const NAMES: [&str; 8] = [
+    "Schnitzelblitz",
+    "Currywurst",
+    "Doenerdrache",
+    "Brezelbert",
+    "Pixelpfanne",
+    "Sauerkraut",
+    "Spaetzlefee",
+    "Fischbroetchen",
+];
+
 pub fn generate(seed: u64) -> String {
-    format!("Player{:05}", seed % 100_000)
+    let name = NAMES[(seed % NAMES.len() as u64) as usize];
+    // The digits fill what is left of the 16 characters, up to four.
+    let digits = (16 - name.len()).min(4) as u32;
+    format!("{name}{:0width$}", (seed / NAMES.len() as u64) % 10u64.pow(digits), width = digits as usize)
 }
 
 /// The name kept in `dir`, created on first use. A file that can't be written
@@ -79,9 +93,11 @@ mod tests {
             assert!(is_valid(&name), "{name}");
             // The LAN host's own profile (game/chat.rs PLAYER_NAME).
             assert_ne!(name, "Player");
-            assert_eq!(name.len(), 11);
+            assert!(name.len() <= 16, "{name}");
         }
-        assert_eq!(generate(42), "Player00042");
+        assert_eq!(generate(0), "Schnitzelblitz00");
+        assert_eq!(generate(1), "Currywurst0000");
+        assert_ne!(generate(8), generate(16), "the digits tell players with the same snack apart");
     }
 
     #[test]
@@ -112,7 +128,7 @@ mod tests {
             fs::write(d.join(FILE), text).unwrap();
             let name = load_or_create(&d);
             assert!(
-                name.starts_with("Player") && is_valid(&name),
+                NAMES.iter().any(|n| name.starts_with(n)) && is_valid(&name),
                 "{text:?} -> {name}"
             );
             assert_eq!(load_or_create(&d), name);
