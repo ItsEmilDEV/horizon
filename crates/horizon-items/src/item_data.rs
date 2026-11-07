@@ -561,11 +561,16 @@ pub fn all_bricks(sides: &[Option<ItemStack>; 4]) -> bool {
             .is_some_and(|s| &*s.item == "minecraft:brick" && s.count == 1 && s.extra.is_none())
     })
 }
+/// An item id as vanilla's `ResourceLocation` has it: `stone` is `minecraft:stone`.
+fn namespaced(id: &str) -> String {
+    if id.contains(':') { id.to_owned() } else { format!("minecraft:{id}") }
+}
+
 fn template_from(tag: &Tag) -> Option<ItemStack> {
     match tag {
-        Tag::String(id) => Some(ItemStack::new(&id.to_string_lossy(), 1)),
+        Tag::String(id) => Some(ItemStack::new(&namespaced(&id.to_string_lossy()), 1)),
         _ => {
-            let id = tag.get("id").and_then(string)?;
+            let id = namespaced(&tag.get("id").and_then(string)?);
             let (damage, extra) = decode_components(tag.get("components"));
             Some(ItemStack {
                 item: Arc::from(id.as_str()),
@@ -1073,6 +1078,16 @@ pub fn command_components(text: &str) -> Result<Tag, String> {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn nested_item_ids_get_the_minecraft_namespace() {
+        let bare = Tag::compound([("id", Tag::String("stone".into())), ("count", Tag::Int(5))]);
+        let stack = template_from(&bare).unwrap();
+        assert_eq!((&*stack.item, stack.count), ("minecraft:stone", 5));
+        let named = Tag::compound([("id", Tag::String("example:ruby".into()))]);
+        assert_eq!(&*template_from(&named).unwrap().item, "example:ruby");
+        assert_eq!(&*template_from(&Tag::String("apple".into())).unwrap().item, "minecraft:apple");
+    }
+
     use super::*;
 
     #[test]

@@ -458,7 +458,8 @@ mod real {
                 return;
             }
             let (dot, title, level) = match self.belumi_voice.client.as_ref() {
-                None if self.belumi_voice.probe_wait >= 0.0 => (YELLOW, "Voice: connecting".to_owned(), None),
+                // While the client asks which protocol the server speaks, nothing shows: most servers have no
+                // voice chat, and "connecting" would sit on the screen for them.
                 None => return,
                 Some(c) => match c.state() {
                     State::Connecting | State::Authenticated => (YELLOW, "Voice: connecting".to_owned(), None),

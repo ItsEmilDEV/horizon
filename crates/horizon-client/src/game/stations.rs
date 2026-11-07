@@ -1766,7 +1766,7 @@ impl Game<'_> {
         &self,
         stack: &ItemStack,
     ) -> Vec<(horizon_client::text::Text, u32)> {
-        self.stack_tooltip_lines(stack, false, false)
+        self.stack_tooltip_lines(stack, false, false, true)
     }
     /// `ItemStack.getRarity`'s colour for the name line and a `[name]` link.
     fn rarity_color(&self, stack: &ItemStack) -> u32 {
@@ -1820,6 +1820,8 @@ impl Game<'_> {
         stack: &ItemStack,
         nested: bool,
         creative: bool,
+        // False when the caller draws the contents as a grid instead.
+        contents: bool,
     ) -> Vec<(horizon_client::text::Text, u32)> {
         let e: &Enchantments = &self.stations().enchantments;
         let color = self.rarity_color(stack);
@@ -1879,7 +1881,7 @@ impl Game<'_> {
                 .or_else(|| s.item_name())
                 .unwrap_or_else(|| self.pack.names.display_item(&s.item))
         };
-        if display.shows("minecraft:container") {
+        if contents && display.shows("minecraft:container") {
             for text in
                 horizon_client::item_tooltip::container_lines(stack, &hover_name, &translate)
             {
@@ -1935,7 +1937,7 @@ impl Game<'_> {
                     )
                 };
                 lines.push((line, u32::MAX));
-                for (text, c) in self.stack_tooltip_lines(projectile, true, false) {
+                for (text, c) in self.stack_tooltip_lines(projectile, true, false, true) {
                     // `literal("  ").append(line).withStyle(GRAY)`: the line's
                     // own colours win over the gray.
                     let rgb = if c == u32::MAX {
@@ -2360,12 +2362,6 @@ impl Game<'_> {
         y: f32,
         after_name: Vec<(horizon_client::text::Text, u32)>,
     ) {
-        let mut lines = self.stack_tooltip_lines(stack, false, creative);
-        if lines.is_empty() {
-            return;
-        }
-        lines.splice(1..1, after_name);
-        let lines = Self::resolved(&lines);
         // The component's height does not depend on where it is drawn, so a
         // probe at the origin gives the box its extra height.
         let probe = horizon_client::bundle::tooltip_layout(self.items(), stack, 0.0, 0.0, 96.0);
@@ -2380,6 +2376,12 @@ impl Game<'_> {
             let rows = slots.iter().map(|(s, _)| s / 9 + 1).max().unwrap_or(1).min(6);
             (rows, slots)
         });
+        let mut lines = self.stack_tooltip_lines(stack, false, creative, preview.is_none());
+        if lines.is_empty() {
+            return;
+        }
+        lines.splice(1..1, after_name);
+        let lines = Self::resolved(&lines);
         let extra = match (&probe, &preview) {
             (Some(l), _) => l.height + 2.0,
             (None, Some((rows, _))) => *rows as f32 * 18.0 + 4.0,
