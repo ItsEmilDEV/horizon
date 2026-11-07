@@ -26,6 +26,19 @@ pub fn hud_title(id: &str) -> &'static str {
     }
 }
 
+/// A short name for a button that has little room.
+pub fn hud_short(id: &str) -> &'static str {
+    match id {
+        "keystrokes" => "Keys",
+        "armor" => "Armor",
+        "effects" => "Effects",
+        "rec" => "Rec",
+        "inventory" => "Inventory",
+        "coords" => "Coords",
+        other => hud_title(other),
+    }
+}
+
 /// One HUD module on the screen. `nx` and `ny` run from 0 (the left or top edge) to 1 (the right or
 /// bottom edge) over the room the module has, so a layout survives another window size.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

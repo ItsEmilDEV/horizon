@@ -46,6 +46,7 @@ pub(super) enum Act {
     ScaleDown,
     ScaleUp,
     Preset(usize),
+    Channel(u8, i32),
     BgDown,
     BgUp,
     Flag(String, String),
@@ -855,6 +856,18 @@ impl Game<'_> {
                     self.modules_changed();
                 }
             }
+            Act::Channel(ch, step) => {
+                let c = &mut self.modules().crosshair;
+                let shift = match ch {
+                    0 => 16,
+                    1 => 8,
+                    _ => 0,
+                };
+                let v = ((c.color >> shift) & 0xFF) as i32;
+                let v = (v + step).clamp(0, 255) as u32;
+                c.color = (c.color & !(0xFF << shift) & 0x00FF_FFFF) | (v << shift);
+                self.modules_changed();
+            }
             Act::Preset(i) => {
                 self.modules().crosshair.apply_preset(i);
                 self.modules_changed();
@@ -1106,15 +1119,19 @@ impl Game<'_> {
         self.client_button(batch, [bar[0] + 236.0, bar[1] + 3.0, 58.0, 16.0], "Done", None, Act::Close);
         // palette
         let ids = modules::HUD_IDS;
-        let chip_w = ((w - 24.0) / ids.len() as f32 - 4.0).clamp(40.0, 82.0);
-        let total = ids.len() as f32 * (chip_w + 4.0) - 4.0;
-        let x0 = (w - total) / 2.0;
-        let py = h - 30.0;
+        let chip_w = 62.0_f32.min((w - 20.0) / 2.0);
+        let per_row = (((w - 12.0) / (chip_w + 4.0)).floor() as usize).clamp(1, ids.len());
+        let rows = ids.len().div_ceil(per_row);
+        let py = h - 30.0 - (rows - 1) as f32 * 22.0;
         let selected_label = selected.as_deref().map(modules::hud_title);
-        self.native_fill(batch, [x0 - 6.0, py - 6.0, total + 12.0, 30.0], 0xE012_1620);
+        let widest = per_row.min(ids.len()) as f32 * (chip_w + 4.0) - 4.0;
+        self.native_fill(batch, [(w - widest) / 2.0 - 6.0, py - 6.0, widest + 12.0, 30.0 + (rows - 1) as f32 * 22.0], 0xE012_1620);
         for (i, id) in ids.iter().enumerate() {
+            let (row, col) = (i / per_row, i % per_row);
+            let in_row = (ids.len() - row * per_row).min(per_row) as f32;
+            let x0 = (w - (in_row * (chip_w + 4.0) - 4.0)) / 2.0;
             let on = modules_list.iter().find(|p| p.id == *id).is_some_and(|p| p.enabled);
-            self.client_button(batch, [x0 + i as f32 * (chip_w + 4.0), py, chip_w, 18.0], modules::hud_title(id), Some(on), Act::Toggle((*id).to_owned()));
+            self.client_button(batch, [x0 + col as f32 * (chip_w + 4.0), py + row as f32 * 22.0, chip_w, 18.0], modules::hud_short(id), Some(on), Act::Toggle((*id).to_owned()));
         }
         // settings of the chosen module
         if let Some(id) = selected
@@ -1154,7 +1171,7 @@ impl Game<'_> {
             }
             let _ = selected_label;
         } else {
-            let hint = "Drag a module to move it. Wheel: size. Arrows: nudge. Shift: no snapping. Ctrl+Z: undo.";
+            let hint = "Drag to move. Wheel: size. Arrows: nudge. Ctrl+Z: undo.";
             let tw = self.native_text_width(hint);
             self.native_text(batch, hint, [(w - tw) / 2.0, py - 16.0], 0x00C8_D0E0, true);
         }
@@ -1238,7 +1255,7 @@ impl Game<'_> {
     fn draw_crosshair_page(&mut self, batch: &mut HudBatch, w: f32, h: f32) {
         self.native_fill(batch, [0.0, 0.0, w, h], 0x9000_0000);
         let pw = 360.0_f32.min(w - 12.0);
-        let ph = (h - 16.0).clamp(196.0, 250.0);
+        let ph = (h - 16.0).clamp(216.0, 262.0);
         let (x, y) = ((w - pw) / 2.0, ((h - ph) / 2.0).floor());
         self.panel(batch, [x, y, pw, ph], "Crosshair");
         self.client_button(batch, [x + pw - 54.0, y + 3.0, 48.0, 14.0], "Back", None, Act::Page(Page::Modules));
@@ -1257,7 +1274,7 @@ impl Game<'_> {
         for piece in c.pieces(0.0) {
             self.native_fill(batch, [cx + piece.x, cy + piece.y, piece.w, piece.h], piece.color);
         }
-        self.client_button(batch, [pv[0], pv[1] + 116.0, 110.0, 16.0], if c.enabled { "Custom crosshair: ON" } else { "Custom crosshair: OFF" }, Some(c.enabled), Act::CrosshairOn);
+        self.client_button(batch, [pv[0], pv[1] + 116.0, 110.0, 16.0], if c.enabled { "Crosshair: ON" } else { "Crosshair: OFF" }, Some(c.enabled), Act::CrosshairOn);
         let cx0 = x + 134.0;
         let mut ry = y + 30.0;
         let style = modules::CROSSHAIR_STYLES[usize::from(c.style)];
@@ -1281,9 +1298,20 @@ impl Game<'_> {
             self.reg(r, Act::Colour(*rgb));
         }
         ry += 22.0;
-        self.native_text(batch, "Presets", [cx0, ry + 3.0], 0x00C8_D0E0, true);
+        let mut px = cx0;
         for (i, name) in modules::CROSSHAIR_PRESETS.iter().enumerate() {
-            self.client_button(batch, [cx0 + 50.0 + i as f32 * 36.0, ry, 34.0, 14.0], name, None, Act::Preset(i));
+            let bw = self.native_text_width(name) + 8.0;
+            self.client_button(batch, [px, ry, bw, 14.0], name, None, Act::Preset(i));
+            px += bw + 3.0;
+        }
+        ry += 20.0;
+        for (i, name) in ["R", "G", "B"].into_iter().enumerate() {
+            let shift = [16, 8, 0][i];
+            let v = (c.color >> shift) & 0xFF;
+            let bx = cx0 + i as f32 * 76.0;
+            self.client_button(batch, [bx, ry, 12.0, 14.0], "-", None, Act::Channel(i as u8, -16));
+            self.native_text(batch, &format!("{name} {v}"), [bx + 16.0, ry + 3.0], 0x00C8_D0E0, true);
+            self.client_button(batch, [bx + 54.0, ry, 12.0, 14.0], "+", None, Act::Channel(i as u8, 16));
         }
         ry += 20.0;
         self.client_button(batch, [cx0, ry, 62.0, 14.0], "Outline", Some(c.outline), Act::Switch("outline"));
