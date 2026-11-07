@@ -21,6 +21,7 @@ horizon-threads = { path = "../horizon-threads" }
 belumi-server = { path = "../../../../crates/belumi-server", optional = true }
 belumi-plugin-api = { path = "../../../../crates/belumi-plugin-api", optional = true }
 belumi-voice = { path = "../../../../crates/belumi-voice", optional = true }
+belumi-presence = { path = "../../../../crates/belumi-presence" }
 belumi-client-plugins = { path = "../../../../crates/belumi-client-plugins", optional = true }
 horizon-hdr = { path = "../horizon-hdr" }
 horizon-world = { path = "../horizon-world" }
@@ -98,12 +99,13 @@ audio = ["horizon-client-render/audio"]
 controllers = ["dep:gilrs", "dep:horizon-dualsense", "horizon-client-input/controllers"]
 # Records the call sites of mob random draws (`mob_ai_probe` traces).
 rng-trace = ["horizon-core/rng-trace"]
-# Belumi server plugins (WebAssembly host from the Belumi repository). Off by default.
-belumi = ["dep:belumi-server", "dep:belumi-plugin-api"]
+# Belumi server plugins (WebAssembly host from the Belumi repository), with client plugins and voice chat.
+belumi = ["dep:belumi-server", "dep:belumi-plugin-api", "belumi-plugins", "belumi-voice"]
 # Belumi client plugins: sandboxed WebAssembly run by the game (docs/client-plugins.md). Off by default.
 belumi-plugins = ["dep:belumi-client-plugins"]
-# Belumi voice chat: Simple Voice Chat compatible client (docs/voice-chat.md). Needs libopus. Off by default.
-belumi-voice = ["dep:belumi-voice"]
+# Belumi voice chat: Simple Voice Chat compatible client (docs/voice-chat.md). Needs libopus. On in every Belumi build
+# (`belumi` and the defaults include it); it needs sound output, so it brings `audio` along.
+belumi-voice = ["dep:belumi-voice", "audio"]
 
 # Its own name, not `probe`: Cargo copies every crate's examples into one target/<profile>/examples.
 [[example]]

@@ -128,7 +128,7 @@ impl Default for Belumi {
             fx_warmth: 2,
             fx_sharpen: 0,
             fx_grain: 0,
-            voice: false,
+            voice: true,
             voice_mode: 0,
             voice_key: "key.keyboard.v".into(),
             voice_mute_key: "key.keyboard.k".into(),

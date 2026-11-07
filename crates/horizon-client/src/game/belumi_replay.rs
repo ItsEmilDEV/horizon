@@ -85,6 +85,7 @@ impl Game<'_> {
 
     /// A session is about to connect: record it when recording is on (never a replay).
     pub(super) fn belumi_replay_begin(&mut self, address: &str, name: &str) {
+        self.belumi_client_set_server(address);
         self.belumi_replay_stop_recording();
         if self.belumi_replay.playing.is_some() || !self.modules().replay.record {
             return;

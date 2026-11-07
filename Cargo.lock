@@ -273,6 +273,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "belumi-presence"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "serde_json",
+]
+
+[[package]]
 name = "belumi-server"
 version = "0.1.0"
 dependencies = [
@@ -1413,6 +1421,7 @@ dependencies = [
  "ab_glyph",
  "belumi-client-plugins",
  "belumi-plugin-api",
+ "belumi-presence",
  "belumi-server",
  "belumi-voice",
  "bytemuck",

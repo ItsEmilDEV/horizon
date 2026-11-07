@@ -161,15 +161,17 @@ impl Crosshair {
         let t = f32::from(self.thickness.max(1));
         let len = f32::from(self.size.max(1));
         let gap = f32::from(self.gap) + spread;
-        let half = t / 2.0;
+        // The centre block spans [a, b) in whole pixels, so rounding never favours one side.
+        let a = -(t / 2.0).floor();
+        let b = a + t;
         let mut shapes: Vec<Piece> = Vec::new();
         let mut rect = |x: f32, y: f32, w: f32, h: f32| shapes.push(Piece { x, y, w, h, color: c });
         match self.style {
             0 => {
-                rect(-half, -gap - len, t, len);
-                rect(-half, gap, t, len);
-                rect(-gap - len, -half, len, t);
-                rect(gap, -half, len, t);
+                rect(a, a - gap - len, t, len);
+                rect(a, b + gap, t, len);
+                rect(a - gap - len, a, len, t);
+                rect(b + gap, a, len, t);
             }
             1 => {
                 let d = (t * 2.0).max(2.0);
@@ -179,8 +181,8 @@ impl Crosshair {
                 let r = len + gap;
                 let steps = 24;
                 for i in 0..steps {
-                    let a = i as f32 / steps as f32 * std::f32::consts::TAU;
-                    rect(a.cos() * r - half, a.sin() * r - half, t, t);
+                    let angle = i as f32 / steps as f32 * std::f32::consts::TAU;
+                    rect(angle.cos() * r + a, angle.sin() * r + a, t, t);
                 }
             }
             3 => {
@@ -194,13 +196,13 @@ impl Crosshair {
                 let r = len;
                 for i in 0..=(r as i32) {
                     let i = i as f32;
-                    rect(-i - half, -r + i + gap, t, t);
-                    rect(i - half, -r + i + gap, t, t);
+                    rect(a - i, a - r + i + gap, t, t);
+                    rect(a + i, a - r + i + gap, t, t);
                 }
             }
         }
         if self.dot && self.style != 1 {
-            rect(-half, -half, t, t);
+            rect(a, a, t, t);
         }
         if self.outline {
             let mut outlined = Vec::with_capacity(shapes.len() * 2);
@@ -232,6 +234,30 @@ pub struct ChatTools {
 impl Default for ChatTools {
     fn default() -> Self {
         Self { timestamps: false, seconds: false, merge_spam: false, ping_sound: false, hide: Vec::new(), highlight: Vec::new(), history: 100 }
+    }
+}
+
+/// What Discord Rich Presence says about the game (docs/discord-presence.md). The address and the
+/// world name are off until the player turns them on.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DiscordOptions {
+    /// "Playing on <address>" while on a server.
+    pub show_server: bool,
+    /// The singleplayer world's name.
+    pub show_world: bool,
+    pub show_dimension: bool,
+    /// The game mode as the small icon.
+    pub show_mode: bool,
+    /// How long you have been in the world.
+    pub show_time: bool,
+    /// How many players are on the server or in your open world.
+    pub show_players: bool,
+}
+
+impl Default for DiscordOptions {
+    fn default() -> Self {
+        Self { show_server: false, show_world: false, show_dimension: true, show_mode: true, show_time: true, show_players: true }
     }
 }
 
@@ -282,6 +308,7 @@ pub struct Modules {
     pub chat: ChatTools,
     pub misc: Misc,
     pub replay: Replay,
+    pub discord: DiscordOptions,
     pub menu_key: String,
 }
 
@@ -293,6 +320,7 @@ impl Default for Modules {
             chat: ChatTools::default(),
             misc: Misc::default(),
             replay: Replay::default(),
+            discord: DiscordOptions::default(),
             menu_key: "key.keyboard.right.shift".into(),
         }
     }
@@ -514,6 +542,26 @@ mod tests {
         m.hud[0].bg = 250;
         m.repair();
         assert_eq!(m.hud_ref("cps").unwrap().bg, 100);
+    }
+
+    #[test]
+    fn the_cross_has_the_same_gap_and_length_on_every_side() {
+        for thickness in 1..=4u8 {
+            for gap in 0..=5u8 {
+                let c = Crosshair { enabled: true, thickness, gap, outline: false, dot: false, ..Crosshair::default() };
+                let p = c.pieces(0.0);
+                let (top, bottom, left, right) = (p[0], p[1], p[2], p[3]);
+                let t = f32::from(thickness);
+                let a = -(t / 2.0).floor();
+                let b = a + t;
+                let g = f32::from(gap);
+                assert_eq!(a - (top.y + top.h), g, "top, thickness {thickness}");
+                assert_eq!(bottom.y - b, g, "bottom, thickness {thickness}");
+                assert_eq!(a - (left.x + left.w), g, "left, thickness {thickness}");
+                assert_eq!(right.x - b, g, "right, thickness {thickness}");
+                assert!(top.h == bottom.h && left.w == right.w && top.h == left.w);
+            }
+        }
     }
 
     #[test]

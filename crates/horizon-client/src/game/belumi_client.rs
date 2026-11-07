@@ -31,6 +31,7 @@ pub(super) enum Page {
     Modules,
     Crosshair,
     Chat,
+    Discord,
     Replays,
     Replay,
 }
@@ -46,6 +47,7 @@ pub(super) enum Act {
     ScaleDown,
     ScaleUp,
     Preset(usize),
+    DiscordFlag(&'static str),
     Channel(u8, i32),
     BgDown,
     BgUp,
@@ -90,6 +92,8 @@ pub(super) struct ClientState {
     fade_at: Option<std::time::Instant>,
     /// First visible row of the Modules page.
     modules_row: usize,
+    /// The address of the server this game is connected to.
+    server: String,
     /// Earlier HUD layouts, newest last (Ctrl+Z in the builder).
     undo: Vec<Vec<Placed>>,
 }
@@ -143,6 +147,14 @@ impl Game<'_> {
     }
 
     /// Remembers the HUD layout before a change, for Ctrl+Z.
+    pub(super) fn belumi_client_server(&self) -> &str {
+        &self.belumi_client.server
+    }
+
+    pub(super) fn belumi_client_set_server(&mut self, address: &str) {
+        self.belumi_client.server = address.to_owned();
+    }
+
     fn undo_push(&mut self) {
         let Some(hud) = self.modules_ref().map(|m| m.hud.clone()) else {
             return;
@@ -869,6 +881,18 @@ impl Game<'_> {
                 c.color = (c.color & !(0xFF << shift) & 0x00FF_FFFF) | (v << shift);
                 self.modules_changed();
             }
+            Act::DiscordFlag(name) => {
+                let d = &mut self.modules().discord;
+                match name {
+                    "server" => d.show_server = !d.show_server,
+                    "world" => d.show_world = !d.show_world,
+                    "dimension" => d.show_dimension = !d.show_dimension,
+                    "mode" => d.show_mode = !d.show_mode,
+                    "time" => d.show_time = !d.show_time,
+                    _ => d.show_players = !d.show_players,
+                }
+                self.modules_changed();
+            }
             Act::Preset(i) => {
                 self.modules().crosshair.apply_preset(i);
                 self.modules_changed();
@@ -923,6 +947,7 @@ impl Game<'_> {
                     "fullbright" => e.fullbright = !e.fullbright,
                     "mouse_tweaks" => e.mouse_tweaks = !e.mouse_tweaks,
                     "sort" => e.sort = !e.sort,
+                    "discord" => e.discord_presence = !e.discord_presence,
                     _ => e.own_name_tag = !e.own_name_tag,
                 }
                 self.settings.save(&Game::options_path());
@@ -1040,6 +1065,7 @@ impl Game<'_> {
             Page::Modules => self.draw_modules_page(batch, w, h),
             Page::Crosshair => self.draw_crosshair_page(batch, w, h),
             Page::Chat => self.draw_chat_page(batch, w, h),
+            Page::Discord => self.draw_discord_page(batch, w, h),
             Page::Replays => self.draw_replays_page(batch, w, h),
             Page::Replay => self.draw_replay_controls_page(batch, w, h),
         }
@@ -1199,6 +1225,7 @@ impl Game<'_> {
             ("Item tooltips".into(), "Item id and durability numbers".into(), Some(m.misc.tooltips), Act::Tooltips, None),
             ("Shulker preview".into(), "Contents in the tooltip".into(), Some(m.misc.container_preview), Act::ContainerPreview, None),
             ("Break warning".into(), "Flash when gear is low".into(), Some(m.misc.low_durability_warning), Act::Warning, None),
+            ("Discord presence".into(), "What your profile shows".into(), Some(self.settings.extras.discord_presence), Act::Extra("discord"), Some(Page::Discord)),
             ("Chat tools".into(), "Time, filter, sound".into(), None, Act::Page(Page::Chat), Some(Page::Chat)),
             ("Replays and clips".into(), "Record, clip, watch again".into(), Some(m.replay.record), Act::Replay(super::belumi_replay::RAct::Record), Some(Page::Replays)),
             ("Auto-reconnect".into(), "Rejoin a lost server".into(), Some(self.settings.extras.auto_reconnect), Act::Reconnect, None),
@@ -1324,6 +1351,36 @@ impl Game<'_> {
         self.client_button(batch, [cx0, ry, 62.0, 14.0], "Outline", Some(c.outline), Act::Switch("outline"));
         self.client_button(batch, [cx0 + 66.0, ry, 50.0, 14.0], "Dot", Some(c.dot), Act::Switch("dot"));
         self.client_button(batch, [cx0 + 120.0, ry, 62.0, 14.0], "Dynamic", Some(c.dynamic), Act::Switch("dynamic"));
+    }
+
+    fn draw_discord_page(&mut self, batch: &mut HudBatch, w: f32, h: f32) {
+        self.native_fill(batch, [0.0, 0.0, w, h], 0x9000_0000);
+        let pw = 360.0_f32.min(w - 12.0);
+        let ph = (h - 16.0).clamp(190.0, 230.0);
+        let (x, y) = ((w - pw) / 2.0, ((h - ph) / 2.0).floor());
+        self.panel(batch, [x, y, pw, ph], "Discord presence");
+        self.client_button(batch, [x + pw - 54.0, y + 3.0, 48.0, 14.0], "Back", None, Act::Page(Page::Modules));
+        let d = self.modules().discord.clone();
+        let on = self.settings.extras.discord_presence;
+        let half = (pw - 30.0) / 2.0;
+        let mut ry = y + 30.0;
+        self.client_button(batch, [x + 10.0, ry, pw - 20.0, 16.0], if on { "Rich Presence: ON" } else { "Rich Presence: OFF" }, Some(on), Act::Extra("discord"));
+        ry += 26.0;
+        let rows: [[(&str, bool, &'static str); 2]; 3] = [
+            [("Server address", d.show_server, "server"), ("World name", d.show_world, "world")],
+            [("Dimension", d.show_dimension, "dimension"), ("Game mode icon", d.show_mode, "mode")],
+            [("Time played", d.show_time, "time"), ("Player count", d.show_players, "players")],
+        ];
+        for row in rows {
+            for (i, (label, state, key)) in row.into_iter().enumerate() {
+                self.client_button(batch, [x + 10.0 + i as f32 * (half + 10.0), ry, half, 16.0], label, Some(state), Act::DiscordFlag(key));
+            }
+            ry += 22.0;
+        }
+        ry += 4.0;
+        self.native_text(batch, "Address and world name stay hidden until switched on.", [x + 10.0, ry], 0x008A_93A8, false);
+        ry += 12.0;
+        self.native_text(batch, "Friends see this on your Discord profile while you play.", [x + 10.0, ry], 0x008A_93A8, false);
     }
 
     fn draw_chat_page(&mut self, batch: &mut HudBatch, w: f32, h: f32) {
