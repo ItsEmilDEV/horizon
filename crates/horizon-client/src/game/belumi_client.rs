@@ -88,6 +88,8 @@ pub(super) struct ClientState {
     fade_at: Option<std::time::Instant>,
     /// First visible row of the Modules page.
     modules_row: usize,
+    /// Earlier HUD layouts, newest last (Ctrl+Z in the builder).
+    undo: Vec<Vec<Placed>>,
 }
 
 pub(super) struct Freelook {
@@ -136,6 +138,27 @@ impl Game<'_> {
 
     fn belumi_dir_pub() -> std::path::PathBuf {
         std::env::current_dir().unwrap_or_default()
+    }
+
+    /// Remembers the HUD layout before a change, for Ctrl+Z.
+    fn undo_push(&mut self) {
+        let Some(hud) = self.modules_ref().map(|m| m.hud.clone()) else {
+            return;
+        };
+        let undo = &mut self.belumi_client.undo;
+        if undo.last() != Some(&hud) {
+            undo.push(hud);
+            if undo.len() > 50 {
+                undo.remove(0);
+            }
+        }
+    }
+
+    fn undo_pop(&mut self) {
+        if let Some(hud) = self.belumi_client.undo.pop() {
+            self.modules().hud = hud;
+            self.modules_changed();
+        }
     }
 
     pub(super) fn modules_changed(&mut self) {
@@ -650,6 +673,7 @@ impl Game<'_> {
         }
         match picked {
             Some((id, grab)) => {
+                self.undo_push();
                 self.belumi_client.selected = Some(id.clone());
                 self.belumi_client.drag = Some((id, grab));
             }
@@ -721,6 +745,8 @@ impl Game<'_> {
             let menu = self.modules().menu_key.clone();
             if horizon_client::keybinds::key_name(key).is_some_and(|k| k == menu) {
                 self.belumi_client_close_screen();
+            } else if key == KeyCode::KeyZ && self.has_control_down() && self.belumi_client.page == Page::Builder {
+                self.undo_pop();
             } else if self.belumi_client.page == Page::Builder
                 && matches!(key, KeyCode::ArrowLeft | KeyCode::ArrowRight | KeyCode::ArrowUp | KeyCode::ArrowDown)
                 && let Some(id) = self.belumi_client.selected.clone()
@@ -728,6 +754,7 @@ impl Game<'_> {
                 let (w, h) = self.gui_size();
                 let p = self.modules_ref().and_then(|m| m.hud_ref(&id)).cloned();
                 if let Some(p) = p {
+                    self.undo_push();
                     let built = self.build_module(&p);
                     let scale = Self::module_scale(&p);
                     let size = (built.w * scale, built.h * scale);
@@ -783,6 +810,9 @@ impl Game<'_> {
     }
 
     fn client_do(&mut self, act: Act) {
+        if matches!(act, Act::Toggle(_) | Act::Starter | Act::ScaleDown | Act::ScaleUp | Act::BgDown | Act::BgUp | Act::Flag(..)) {
+            self.undo_push();
+        }
         match act {
             Act::Page(page) => {
                 self.chat_boxes_commit();
@@ -1124,7 +1154,7 @@ impl Game<'_> {
             }
             let _ = selected_label;
         } else {
-            let hint = "Drag a module to move it. Wheel: size. Arrows: nudge. Shift: no snapping.";
+            let hint = "Drag a module to move it. Wheel: size. Arrows: nudge. Shift: no snapping. Ctrl+Z: undo.";
             let tw = self.native_text_width(hint);
             self.native_text(batch, hint, [(w - tw) / 2.0, py - 16.0], 0x00C8_D0E0, true);
         }
