@@ -18,10 +18,10 @@ use serde_json::{Value, json};
 use crate::command::args::GameMode;
 
 /// Belumi's own application on Discord's developer portal (its ID is public: it names the game).
-/// Empty until the application exists; `BELUMI_DISCORD_APP_ID` in the environment overrides it.
+/// `BELUMI_DISCORD_APP_ID` in the environment overrides it; empty switches the presence off.
 /// Rich Presence assets to upload there: `belumi`, the logo.
 /// Never put another application's ID here.
-pub const BELUMI_DISCORD_APP_ID: &str = "";
+pub const BELUMI_DISCORD_APP_ID: &str = "1568528963675099208";
 
 /// The application ID in use, or `None` when none is configured.
 fn app_id() -> Option<String> {
