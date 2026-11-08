@@ -22,6 +22,7 @@ const EVICT_EVERY: Duration = Duration::from_secs(2);
 
 enum Job {
     Write(PathBuf, Vec<u8>),
+    Remove(PathBuf),
 }
 
 #[derive(Default)]
@@ -108,18 +109,44 @@ fn saved_columns(dir: &Path, centre: (i32, i32), radius: i32) -> Vec<(i32, i32)>
 }
 
 impl Distant {
-    fn write(&mut self, path: PathBuf, bytes: Vec<u8>) {
-        let tx = self.writer.get_or_insert_with(|| {
+    /// Whether the column is one the server no longer holds (kept, or taken from the cache).
+    pub(super) fn is_ghost(&self, x: i32, z: i32) -> bool {
+        self.ghosts.contains(&(x, z))
+    }
+
+    pub(super) fn remove(&mut self, path: PathBuf) {
+        self.start_writer();
+        if let Some(tx) = &self.writer {
+            let _ = tx.send(Job::Remove(path));
+        }
+    }
+
+    pub(super) fn write(&mut self, path: PathBuf, bytes: Vec<u8>) {
+        self.start_writer();
+        if let Some(tx) = &self.writer {
+            let _ = tx.send(Job::Write(path, bytes));
+        }
+    }
+
+    fn start_writer(&mut self) {
+        self.writer.get_or_insert_with(|| {
             let (tx, rx) = mpsc::channel::<Job>();
             let spawned = std::thread::Builder::new().name("Belumi chunk cache".into()).spawn(move || {
                 prune(&root(), CACHE_LIMIT);
-                for Job::Write(path, bytes) in rx {
-                    if let Some(dir) = path.parent() {
-                        let _ = std::fs::create_dir_all(dir);
-                    }
-                    let tmp = path.with_extension("tmp");
-                    if std::fs::write(&tmp, &bytes).is_ok() {
-                        let _ = std::fs::rename(&tmp, &path);
+                for job in rx {
+                    match job {
+                        Job::Write(path, bytes) => {
+                            if let Some(dir) = path.parent() {
+                                let _ = std::fs::create_dir_all(dir);
+                            }
+                            let tmp = path.with_extension("tmp");
+                            if std::fs::write(&tmp, &bytes).is_ok() {
+                                let _ = std::fs::rename(&tmp, &path);
+                            }
+                        }
+                        Job::Remove(path) => {
+                            let _ = std::fs::remove_file(path);
+                        }
                     }
                 }
             });
@@ -128,7 +155,6 @@ impl Distant {
             }
             tx
         });
-        let _ = tx.send(Job::Write(path, bytes));
     }
 }
 
@@ -141,7 +167,7 @@ impl Game<'_> {
             && self.modules_ref().is_none_or(|m| m.misc.distant_chunks)
     }
 
-    fn belumi_distant_dir(&self) -> PathBuf {
+    pub(super) fn belumi_distant_dir(&self) -> PathBuf {
         root()
             .join(super::belumi_maps::safe_name(&self.belumi_scope()))
             .join(super::belumi_maps::safe_name(self.dim.id()))
@@ -169,6 +195,7 @@ impl Game<'_> {
             return false;
         }
         self.belumi_distant.ghosts.insert((x, z));
+        self.belumi_changes_save_seen(x, z);
         self.world.block_entities.retain(|k, _| (k.0 >> 4, k.2 >> 4) != (x, z));
         true
     }
@@ -234,15 +261,27 @@ impl Game<'_> {
         if self.world.chunks.contains_key(&(x, z)) {
             return;
         }
-        let Some(format) = self.remote.as_ref().map(|r| r.chunk_format.clone()) else { return };
-        let mut r = Reader::new(bytes);
-        let Ok(packet) = <play::LevelChunkWithLight as Codec<play::LevelChunkWithLight>>::read(&mut r) else { return };
-        if (packet.x, packet.z) != (x, z) {
-            return;
-        }
-        let Ok(chunk) = format.column(&packet) else { return };
+        let Some(chunk) = self.belumi_distant_decode(x, z, bytes) else { return };
         self.streaming.insert_remote(&mut self.world, chunk);
         self.belumi_distant.ghosts.insert((x, z));
+        self.belumi_changes_load_seen(x, z);
+    }
+
+    /// A cached column's bytes (the server's packet, already unpacked) as a column of ours.
+    fn belumi_distant_decode(&self, x: i32, z: i32, bytes: &[u8]) -> Option<horizon_client::chunk::Chunk> {
+        let format = self.remote.as_ref().map(|r| r.chunk_format.clone())?;
+        let mut r = Reader::new(bytes);
+        let packet = <play::LevelChunkWithLight as Codec<play::LevelChunkWithLight>>::read(&mut r).ok()?;
+        if (packet.x, packet.z) != (x, z) {
+            return None;
+        }
+        format.column(&packet).ok()
+    }
+
+    /// The cached copy of a column, read from the disk now.
+    pub(super) fn belumi_distant_read(&self, x: i32, z: i32) -> Option<horizon_client::chunk::Chunk> {
+        let bytes = std::fs::read(file(&self.belumi_distant_dir(), x, z)).ok().and_then(|b| unpack(&b))?;
+        self.belumi_distant_decode(x, z, &bytes)
     }
 
     /// Takes columns out of the world and the renderer.

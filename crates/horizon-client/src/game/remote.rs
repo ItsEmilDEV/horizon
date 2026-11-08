@@ -1610,6 +1610,7 @@ impl Game<'_> {
     /// predicted state until the server acknowledges the action; the server's state is
     /// remembered for then.
     fn server_block(&mut self, pos: [i32; 3], state: i32) {
+        self.belumi_changes_seen(pos);
         if let Some((_, known)) = self
             .remote
             .as_mut()

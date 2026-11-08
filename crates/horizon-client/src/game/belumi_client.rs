@@ -33,6 +33,7 @@ pub(super) enum Page {
     Chat,
     Discord,
     Accounts,
+    Changes,
     Plugin,
     Replays,
     Replay,
@@ -69,6 +70,9 @@ pub(super) enum Act {
     ContainerPreview,
     DistantChunks,
     Trail,
+    ChangesOn,
+    ChangeMark(usize),
+    ChangesClear,
     PickAccount(usize),
     PluginOpen(String),
     PluginPress(String, String, bool),
@@ -970,6 +974,14 @@ impl Game<'_> {
             Act::PluginOpen(plugin) => self.belumi_client.plugin_page = Some(plugin),
             Act::PluginPress(plugin, id, value) => self.belumi_plugin_press(&plugin, &id, value),
             Act::PickAccount(i) => self.belumi_switch_account(i),
+            Act::ChangesOn => {
+                let m = self.modules();
+                m.misc.changes = !m.misc.changes;
+                self.modules_changed();
+            }
+            Act::ChangeMark(_) | Act::ChangesClear => {
+                self.belumi_changes_act(&act);
+            }
             Act::Trail => {
                 let m = self.modules();
                 m.misc.trail = !m.misc.trail;
@@ -1116,6 +1128,7 @@ impl Game<'_> {
             Page::Discord => self.draw_discord_page(batch, w, h),
             Page::Accounts => self.draw_accounts_page(batch, w, h),
             Page::Plugin => self.draw_plugin_page(batch, w, h),
+            Page::Changes => self.draw_changes_page(batch, w, h),
             Page::Replays => self.draw_replays_page(batch, w, h),
             Page::Replay => self.draw_replay_controls_page(batch, w, h),
         }
@@ -1274,6 +1287,7 @@ impl Game<'_> {
             ("Crosshair".into(), "Your own shape and colour".into(), Some(m.crosshair.enabled), Act::CrosshairOn, Some(Page::Crosshair)),
             ("Item tooltips".into(), "Item id and durability numbers".into(), Some(m.misc.tooltips), Act::Tooltips, None),
             ("Shulker preview".into(), "Contents in the tooltip".into(), Some(m.misc.container_preview), Act::ContainerPreview, None),
+            ("Changes".into(), "What changed since your last visit".into(), Some(m.misc.changes), Act::ChangesOn, Some(Page::Changes)),
             ("Breadcrumb trail".into(), "Dots behind you, for the way back".into(), Some(m.misc.trail), Act::Trail, None),
             ("Distant chunks".into(), "Keep far chunks, cache them".into(), Some(m.misc.distant_chunks), Act::DistantChunks, None),
             ("Break warning".into(), "Flash when gear is low".into(), Some(m.misc.low_durability_warning), Act::Warning, None),

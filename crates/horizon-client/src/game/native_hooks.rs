@@ -316,6 +316,7 @@ impl Game<'_> {
         self.belumi_explore(elapsed.as_secs_f32());
         self.belumi_distant_tick();
         self.belumi_trail_frame();
+        self.belumi_changes_tick();
     }
     /// Once a tick, in every `Game`: the window's (in single player, on LAN
     /// and on servers), and the server's own (`native_window` is false

@@ -274,6 +274,8 @@ pub struct Misc {
     pub distant_chunks: bool,
     /// Breadcrumbs behind the player (the way back), drawn in the world.
     pub trail: bool,
+    /// Compare the columns a server sends with the cached ones and report what changed since the last visit.
+    pub changes: bool,
     /// What the compass module points at: a waypoint's name, `back` for where the trail began, empty for the nearest.
     pub compass_target: String,
     pub low_durability_warning: bool,
@@ -288,6 +290,7 @@ impl Default for Misc {
             container_preview: true,
             distant_chunks: true,
             trail: false,
+            changes: true,
             compass_target: String::new(),
             low_durability_warning: true,
         }

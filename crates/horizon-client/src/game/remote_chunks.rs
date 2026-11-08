@@ -282,6 +282,7 @@ impl Game<'_> {
             }
         };
         let (x, z) = (p.x, p.z);
+        self.belumi_changes_compare(&chunk);
         self.belumi_distant_received(p);
         self.streaming.insert_remote(&mut self.world, chunk);
         self.world

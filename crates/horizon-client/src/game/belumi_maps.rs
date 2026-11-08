@@ -302,6 +302,7 @@ impl Game<'_> {
 
     pub(super) fn belumi_left(&mut self) {
         self.belumi_freecam_off();
+        self.belumi_changes_flush();
         self.belumi_save_map(true);
         self.belumi_maps.server.clear();
         self.belumi_maps.loaded_for = None;
