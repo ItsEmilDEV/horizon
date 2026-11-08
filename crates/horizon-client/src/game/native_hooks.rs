@@ -312,6 +312,7 @@ impl Game<'_> {
         self.belumi_plugins_frame();
         self.belumi_voice_frame(elapsed.as_secs_f32());
         self.belumi_freecam_frame(elapsed.as_secs_f32());
+        self.belumi_photo_frame(elapsed.as_secs_f32());
         self.modules_tick();
         self.belumi_explore(elapsed.as_secs_f32());
         self.belumi_distant_tick();

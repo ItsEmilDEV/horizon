@@ -625,6 +625,7 @@ impl Game<'_> {
     pub(super) fn belumi_client_key(&mut self, key: &str, pressed: bool) {
         self.freelook_key(key, pressed);
         self.belumi_replay_key(key, pressed);
+        self.belumi_photo_key(key, pressed);
         let menu_key = self.modules().menu_key.clone();
         if pressed && key == menu_key && self.native_playing() {
             self.client_open();
