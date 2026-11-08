@@ -398,6 +398,7 @@ impl Game<'_> {
         self.belumi_combat_command(command, ran);
         self.belumi_history_command(command, ran);
         self.belumi_replay_command(command, ran);
+        self.belumi_pat_command(command, ran);
         self.belumi_ping_command(command, ran);
         self.belumi_blueprint_command(command, ran);
         self.belumi_voice_command(command, ran);
