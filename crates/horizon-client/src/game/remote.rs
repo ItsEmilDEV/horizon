@@ -7780,6 +7780,10 @@ impl horizon_client::interaction_input::InteractionWorld for RemoteInputWorld<'_
 }
 
 impl Remote {
+    /// The name of a player entity, as the tab list gave it.
+    pub(super) fn player_name(&self, entity: u32) -> Option<String> {
+        self.level_player_names.get(&i32::try_from(entity).ok()?).cloned()
+    }
     /// The kind (`minecraft:zombie`) of a tracked entity.
     pub(super) fn entity_kind(&self, id: i32) -> Option<String> {
         self.entities.get(&id).map(|e| e.kind.clone())

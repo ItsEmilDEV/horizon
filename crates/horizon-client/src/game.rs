@@ -2371,7 +2371,7 @@ fn facing_offset(facing: &str) -> [i32; 3] {
     }
 }
 /// How far along `dir` (within `reach`) a ray from `eye` enters `b`.
-fn ray_box(eye: [f64; 3], dir: [f64; 3], reach: f64, b: Aabb) -> Option<f64> {
+pub(super) fn ray_box(eye: [f64; 3], dir: [f64; 3], reach: f64, b: Aabb) -> Option<f64> {
     let (min, max) = (b.min_position(), b.max_position());
     let (lo, hi) = ([min.x, min.y, min.z], [max.x, max.y, max.z]);
     let (mut t0, mut t1) = (0.0f64, reach);
@@ -2422,7 +2422,7 @@ impl Game<'_> {
     /// Where targeting starts and points: the eyes along the view. Every
     /// crosshair target (blocks, fluids, entities, mod raycasts) is found
     /// along this ray, so a tracked controller can stand in for it.
-    fn aim(&self) -> Option<([f64; 3], [f64; 3])> {
+    pub(super) fn aim(&self) -> Option<([f64; 3], [f64; 3])> {
         // Minecraft.pick: from the camera entity's eyes along its view
         // (LivingEntity.getViewYRot: the head's yaw).
         if let Some(m) = self.camera_mob() {
@@ -2510,7 +2510,7 @@ impl Game<'_> {
         self.clip_ray(origin, dir, self.reach())
     }
     /// The first block outline hit within `reach` along the unit `dir`.
-    fn clip_ray(&self, origin: [f64; 3], dir: [f64; 3], reach: f64) -> Option<Hit> {
+    pub(super) fn clip_ray(&self, origin: [f64; 3], dir: [f64; 3], reach: f64) -> Option<Hit> {
         let mut pos = origin.map(|v| v.floor() as i32);
         let step = dir.map(|d| if d > 0.0 { 1 } else { -1 });
         let delta = dir.map(|d| {
