@@ -2146,6 +2146,9 @@ impl Game<'_> {
             C::CustomPayload(p) if self.belumi_voice_channel(&p.channel) => {
                 self.belumi_voice_payload(&p.channel, &p.data);
             }
+            C::CustomPayload(p) if p.channel == super::belumi_ping::CHANNEL => {
+                self.belumi_ping_receive(&p.data);
+            }
             C::CustomPayload(p) if self.belumi_replay_channel(&p.channel) => {
                 self.belumi_replay_payload(&p.channel, &p.data);
             }

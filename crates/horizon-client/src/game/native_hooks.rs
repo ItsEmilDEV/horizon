@@ -362,6 +362,7 @@ impl Game<'_> {
         self.belumi_draw_labels(batch);
         self.belumi_draw_trail(batch);
         self.belumi_draw_redstone(batch);
+        self.belumi_draw_pings(batch);
         self.belumi_modules_draw(batch);
         self.belumi_draw_worldmap(batch);
     }
@@ -392,6 +393,7 @@ impl Game<'_> {
         self.belumi_combat_command(command, ran);
         self.belumi_history_command(command, ran);
         self.belumi_replay_command(command, ran);
+        self.belumi_ping_command(command, ran);
         self.belumi_voice_command(command, ran);
         self.belumi_map_command(command, ran);
     }

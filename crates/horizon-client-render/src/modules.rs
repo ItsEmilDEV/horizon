@@ -287,6 +287,9 @@ pub struct Misc {
     pub world_history: bool,
     /// The signal strength written over redstone dust and its relatives.
     pub redstone_numbers: bool,
+    /// Pings and shared waypoints between Belumi players on a server.
+    pub pings: bool,
+    pub ping_key: String,
     /// What the compass module points at: a waypoint's name, `back` for where the trail began, empty for the nearest.
     pub compass_target: String,
     pub low_durability_warning: bool,
@@ -307,6 +310,8 @@ impl Default for Misc {
             sound_physics: false,
             world_history: true,
             redstone_numbers: false,
+            pings: true,
+            ping_key: "key.keyboard.z".into(),
             compass_target: String::new(),
             low_durability_warning: true,
         }

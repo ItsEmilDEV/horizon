@@ -1508,6 +1508,14 @@ impl Game<'_> {
                 self.guest_carried_back(host, gi);
             }
             S::ChatCommand(c) => self.guest_chat_command(host, conn, &c.command),
+            S::CustomPayload(p) if p.channel == super::belumi_ping::CHANNEL => {
+                // A Belumi player's ping or shared waypoint: handed on to the others, with the name the server knows.
+                if let Some(name) = host.hub.guest(conn).map(|g| g.name.clone())
+                    && let Some(data) = super::belumi_ping::relay(&name, &p.data)
+                {
+                    host.hub.broadcast_except(conn, &C::CustomPayload(horizon_protocol::packets::configuration::CustomPayload { channel: p.channel.clone(), data }));
+                }
+            }
             S::CustomPayload(p) if p.channel == horizon_protocol::quiet::CHANNEL => {
                 self.guest_quiet_commands(host, conn, &p.data)
             }

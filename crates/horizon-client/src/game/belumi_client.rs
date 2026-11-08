@@ -80,6 +80,7 @@ pub(super) enum Act {
     SoundOn,
     HistoryOn,
     RedstoneNumbers,
+    PingsOn,
     TickCmd(&'static str),
     CombatClear,
     ChestMark(usize),
@@ -663,6 +664,7 @@ impl Game<'_> {
         self.freelook_key(key, pressed);
         self.belumi_replay_key(key, pressed);
         self.belumi_photo_key(key, pressed);
+        self.belumi_ping_key(key, pressed);
         let menu_key = self.modules().menu_key.clone();
         if pressed && key == menu_key && self.native_playing() {
             self.client_open();
@@ -1027,6 +1029,11 @@ impl Game<'_> {
             Act::PluginOpen(plugin) => self.belumi_client.plugin_page = Some(plugin),
             Act::PluginPress(plugin, id, value) => self.belumi_plugin_press(&plugin, &id, value),
             Act::PickAccount(i) => self.belumi_switch_account(i),
+            Act::PingsOn => {
+                let m = self.modules();
+                m.misc.pings = !m.misc.pings;
+                self.modules_changed();
+            }
             Act::RedstoneNumbers | Act::TickCmd(_) => {
                 self.redstone_act(&act);
             }
@@ -1375,6 +1382,7 @@ impl Game<'_> {
             ("Shulker preview".into(), "Contents in the tooltip".into(), Some(m.misc.container_preview), Act::ContainerPreview, None),
             ("World history".into(), "Older chunk versions, /rollback".into(), Some(m.misc.world_history), Act::HistoryOn, None),
             ("Sound physics".into(), "Reverb of the room you are in".into(), Some(m.misc.sound_physics), Act::SoundOn, None),
+            ("Pings".into(), "Z marks a spot for friends".into(), Some(m.misc.pings), Act::PingsOn, None),
             ("Redstone workbench".into(), "Signals, /tick controls".into(), None, Act::Page(Page::Redstone), Some(Page::Redstone)),
             ("Combat log".into(), "Swings, hits, damage, CPS".into(), Some(m.misc.combat), Act::CombatOn, Some(Page::Combat)),
             ("Chest memory".into(), "Find items with /chests".into(), Some(m.misc.chest_memory), Act::ChestsOn, Some(Page::Chests)),
