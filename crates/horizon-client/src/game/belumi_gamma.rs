@@ -40,14 +40,14 @@ impl Game<'_> {
             m.misc.gamma_level
         };
         self.modules_changed();
-        self.toast(if level == 0 { "Gamma boost off".to_owned() } else { format!("Gamma boost {level} of 15") });
+        self.belumi_confirm(&if level == 0 { "Gamma boost off".to_owned() } else { format!("Gamma boost {level} of 15 (some servers count it as help)") });
     }
 
     pub(super) fn belumi_fullbright_toggle(&mut self) {
         self.settings.extras.fullbright = !self.settings.extras.fullbright;
         self.settings.save(&Game::options_path());
         let on = self.settings.extras.fullbright;
-        self.toast(if on { "Fullbright ON" } else { "Fullbright OFF" });
+        self.belumi_confirm(if on { "Fullbright ON" } else { "Fullbright OFF" });
     }
 
     pub(super) fn belumi_gamma_key(&mut self, key: &str, pressed: bool) {

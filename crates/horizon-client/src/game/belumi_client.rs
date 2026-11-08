@@ -87,6 +87,7 @@ pub(super) enum Act {
     LightOn,
     GammaCycle,
     RiptideFix,
+    ConfirmCycle,
     SoundLevel(String, u8),
     SoundsReset,
     AccurateBreak,
@@ -1060,8 +1061,22 @@ impl Game<'_> {
                 self.belumi_sounds_act(&act);
             }
             Act::RiptideFix => {
+                let on = {
+                    let m = self.modules();
+                    m.misc.riptide_fix = !m.misc.riptide_fix;
+                    m.misc.riptide_fix
+                };
+                self.modules_changed();
+                self.belumi_confirm(if on { "Riptide fix ON: a server that checks speed may notice" } else { "Riptide fix OFF" });
+            }
+            Act::ConfirmCycle => {
                 let m = self.modules();
-                m.misc.riptide_fix = !m.misc.riptide_fix;
+                m.misc.confirm = match m.misc.confirm.as_str() {
+                    "hud" => "chat",
+                    "chat" => "off",
+                    _ => "hud",
+                }
+                .to_owned();
                 self.modules_changed();
             }
             Act::GammaCycle => self.belumi_gamma_cycle(),
@@ -1432,6 +1447,7 @@ impl Game<'_> {
             ("World history".into(), "Older chunk versions, /rollback".into(), Some(m.misc.world_history), Act::HistoryOn, None),
             ("Sound physics".into(), "Reverb of the room you are in".into(), Some(m.misc.sound_physics), Act::SoundOn, None),
             ("Sound controller".into(), "Turn single sounds down".into(), None, Act::Page(Page::Sounds), Some(Page::Sounds)),
+            ("Switch notices".into(), format!("Say what a switch did: {}", m.misc.confirm), Some(m.misc.confirm != "off"), Act::ConfirmCycle, None),
             ("Riptide fix".into(), "Depth Strider keeps Riptide fast".into(), Some(m.misc.riptide_fix), Act::RiptideFix, None),
             ("Gamma boost".into(), format!("Brightness beyond the slider: {} of 15", m.misc.gamma_level), Some(m.misc.gamma_level > 0), Act::GammaCycle, None),
             ("Light overlay".into(), "X where monsters can spawn".into(), Some(m.misc.light_overlay), Act::LightOn, None),

@@ -82,6 +82,16 @@ impl Game<'_> {
         self.belumi_placement_toggle();
     }
 
+    /// The notice a switch gives (the mod's "Confirmation" and "Confirmation Type"): on the HUD, in chat, or none.
+    pub(super) fn belumi_confirm(&mut self, text: &str) {
+        let how = self.modules_ref().map(|m| m.misc.confirm.clone()).unwrap_or_default();
+        match how.as_str() {
+            "off" => {}
+            "chat" => self.native_chat(text),
+            _ => self.toast(text),
+        }
+    }
+
     pub(super) fn belumi_placement_toggle(&mut self) {
         let on = {
             let m = self.modules();
@@ -89,7 +99,7 @@ impl Game<'_> {
             m.misc.accurate_placement
         };
         self.modules_changed();
-        self.toast(if on {
+        self.belumi_confirm(if on {
             "Accurate placement: ON. Some servers count this as cheating."
         } else {
             "Accurate placement: OFF"

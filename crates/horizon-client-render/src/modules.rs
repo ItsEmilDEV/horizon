@@ -301,6 +301,8 @@ pub struct Misc {
     pub riptide_fix: bool,
     /// How far the Inspect module looks, in blocks (the game's own reach is for hitting and placing).
     pub inspect_range: u8,
+    /// Where a switch says what it did: `hud` (a notice on the screen), `chat` or `off` (the mod's "Confirmation Type").
+    pub confirm: String,
     /// Single sound events turned down or muted, in percent (the Sound controller page).
     pub sound_levels: std::collections::BTreeMap<String, u8>,
     pub gamma_key: String,
@@ -334,6 +336,7 @@ impl Default for Misc {
             gamma_level: 0,
             riptide_fix: false,
             inspect_range: 20,
+            confirm: "hud".into(),
             sound_levels: Default::default(),
             gamma_key: String::new(),
             fullbright_key: String::new(),
