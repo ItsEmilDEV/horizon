@@ -276,6 +276,8 @@ pub struct Misc {
     pub trail: bool,
     /// Compare the columns a server sends with the cached ones and report what changed since the last visit.
     pub changes: bool,
+    /// Remember what the containers you open hold (`/chests TEXT`).
+    pub chest_memory: bool,
     /// What the compass module points at: a waypoint's name, `back` for where the trail began, empty for the nearest.
     pub compass_target: String,
     pub low_durability_warning: bool,
@@ -291,6 +293,7 @@ impl Default for Misc {
             distant_chunks: true,
             trail: false,
             changes: true,
+            chest_memory: true,
             compass_target: String::new(),
             low_durability_warning: true,
         }

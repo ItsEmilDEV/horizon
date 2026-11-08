@@ -167,7 +167,7 @@ pub(super) struct Remote {
     /// The open menu's title as the server named it, with its styles.
     pub(super) menu_title: Option<horizon_client::text::Text>,
     state_id: i32,
-    use_target: Option<[i32; 3]>,
+    pub(super) use_target: Option<[i32; 3]>,
     entities: HashMap<i32, Tracked>,
     lerps: HashMap<i32, Lerp>,
     /// Living entities' `SteppedInterpolationHandler`s.
@@ -3149,16 +3149,20 @@ impl Game<'_> {
             }
             C::ContainerSetContent(p) => {
                 self.remote_menu_state(p.container, p.state);
+                let mut seen = Vec::with_capacity(p.items.len());
                 for (slot, item) in p.items.iter().enumerate() {
                     let stack = self.to_stack(item);
+                    seen.push(stack.clone());
                     self.set_menu_slot(p.container, slot as i32, stack);
                 }
+                self.belumi_chests_content(p.container, &seen);
                 self.carried = self.to_stack(&p.carried);
                 self.remote_synced();
             }
             C::ContainerSetSlot(p) => {
                 self.remote_menu_state(p.container, p.state);
                 let stack = self.to_stack(&p.item);
+                self.belumi_chests_slot(p.container, p.slot.into(), stack.clone());
                 self.tutorial_get_item(stack.as_ref());
                 // ClientPacketListener.handleContainerSetSlot: a hotbar slot that
                 // gains items squeezes for 5 ticks.

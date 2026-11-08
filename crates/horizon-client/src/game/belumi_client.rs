@@ -34,6 +34,7 @@ pub(super) enum Page {
     Discord,
     Accounts,
     Changes,
+    Chests,
     Plugin,
     Replays,
     Replay,
@@ -71,6 +72,8 @@ pub(super) enum Act {
     DistantChunks,
     Trail,
     ChangesOn,
+    ChestsOn,
+    ChestMark(usize),
     ChangeMark(usize),
     ChangesClear,
     PickAccount(usize),
@@ -643,6 +646,18 @@ impl Game<'_> {
 
     /// A plugin asked for its screen (or the list of them with none): the client screen opens on the Plugin page.
     #[cfg_attr(not(feature = "belumi-plugins"), allow(dead_code))]
+    /// Opens the client screen on a page.
+    pub(super) fn client_open_page(&mut self, page: Page) {
+        if !self.native_playing() {
+            return;
+        }
+        if self.screen != Screen::BelumiClient {
+            self.client_open();
+        }
+        self.belumi_client.page = page;
+    }
+
+    #[cfg_attr(not(feature = "belumi-plugins"), allow(dead_code))]
     pub(super) fn client_open_plugin(&mut self, plugin: Option<String>) {
         if !self.native_playing() {
             return;
@@ -974,6 +989,14 @@ impl Game<'_> {
             Act::PluginOpen(plugin) => self.belumi_client.plugin_page = Some(plugin),
             Act::PluginPress(plugin, id, value) => self.belumi_plugin_press(&plugin, &id, value),
             Act::PickAccount(i) => self.belumi_switch_account(i),
+            Act::ChestsOn => {
+                let m = self.modules();
+                m.misc.chest_memory = !m.misc.chest_memory;
+                self.modules_changed();
+            }
+            Act::ChestMark(_) => {
+                self.belumi_chests_act(&act);
+            }
             Act::ChangesOn => {
                 let m = self.modules();
                 m.misc.changes = !m.misc.changes;
@@ -1129,6 +1152,7 @@ impl Game<'_> {
             Page::Accounts => self.draw_accounts_page(batch, w, h),
             Page::Plugin => self.draw_plugin_page(batch, w, h),
             Page::Changes => self.draw_changes_page(batch, w, h),
+            Page::Chests => self.draw_chests_page(batch, w, h),
             Page::Replays => self.draw_replays_page(batch, w, h),
             Page::Replay => self.draw_replay_controls_page(batch, w, h),
         }
@@ -1287,6 +1311,7 @@ impl Game<'_> {
             ("Crosshair".into(), "Your own shape and colour".into(), Some(m.crosshair.enabled), Act::CrosshairOn, Some(Page::Crosshair)),
             ("Item tooltips".into(), "Item id and durability numbers".into(), Some(m.misc.tooltips), Act::Tooltips, None),
             ("Shulker preview".into(), "Contents in the tooltip".into(), Some(m.misc.container_preview), Act::ContainerPreview, None),
+            ("Chest memory".into(), "Find items with /chests".into(), Some(m.misc.chest_memory), Act::ChestsOn, Some(Page::Chests)),
             ("Changes".into(), "What changed since your last visit".into(), Some(m.misc.changes), Act::ChangesOn, Some(Page::Changes)),
             ("Breadcrumb trail".into(), "Dots behind you, for the way back".into(), Some(m.misc.trail), Act::Trail, None),
             ("Distant chunks".into(), "Keep far chunks, cache them".into(), Some(m.misc.distant_chunks), Act::DistantChunks, None),
