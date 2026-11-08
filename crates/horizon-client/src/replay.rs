@@ -400,6 +400,9 @@ pub struct Clip {
     pub start_ms: u32,
     pub end_ms: u32,
     pub created_unix: u64,
+    /// The entity that dealt the last blow, for a clip the game saved at a death (the camera can follow it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub killer: Option<i32>,
 }
 
 pub fn clips_path(replay: &Path) -> PathBuf {
@@ -418,7 +421,13 @@ pub fn save_clips(replay: &Path, clips: &[Clip]) {
 
 /// Adds a clip of the last `seconds` ending at `now_ms` to the replay's clip list.
 pub fn add_clip(replay: &Path, now_ms: u32, seconds: u32, name: &str) -> Clip {
+    add_clip_with(replay, now_ms, seconds, name, None)
+}
+
+/// `add_clip` with the entity that killed the player.
+pub fn add_clip_with(replay: &Path, now_ms: u32, seconds: u32, name: &str, killer: Option<i32>) -> Clip {
     let clip = Clip {
+        killer,
         name: name.to_owned(),
         start_ms: now_ms.saturating_sub(seconds.saturating_mul(1000)),
         end_ms: now_ms,

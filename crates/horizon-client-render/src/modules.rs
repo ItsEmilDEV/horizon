@@ -308,11 +308,13 @@ pub struct Replay {
     pub clip_key: String,
     pub mark_key: String,
     pub keep: u16,
+    /// A death saves a clip of the last moments at once (with the killer, for the killer camera).
+    pub auto_death_clip: bool,
 }
 
 impl Default for Replay {
     fn default() -> Self {
-        Self { record: false, clip_seconds: 30, clip_key: "key.keyboard.f10".into(), mark_key: "key.keyboard.f6".into(), keep: 20 }
+        Self { record: false, clip_seconds: 30, clip_key: "key.keyboard.f10".into(), mark_key: "key.keyboard.f6".into(), keep: 20, auto_death_clip: true }
     }
 }
 

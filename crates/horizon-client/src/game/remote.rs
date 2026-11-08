@@ -2795,6 +2795,7 @@ impl Game<'_> {
             // (sent to the player itself): its own moves never hurt it.
             C::DamageEvent(p) => {
                 if self.remote.as_ref().is_some_and(|r| r.entity_id == p.id) {
+                    self.belumi_replay_damage(p.cause.or(p.direct));
                     if let Some(pl) = self.player.as_mut() {
                         pl.health.animate_hurt();
                     }
@@ -7769,6 +7770,27 @@ impl horizon_client::interaction_input::InteractionWorld for RemoteInputWorld<'_
 }
 
 impl Remote {
+    /// The kind (`minecraft:zombie`) of a tracked entity.
+    pub(super) fn entity_kind(&self, id: i32) -> Option<String> {
+        self.entities.get(&id).map(|e| e.kind.clone())
+    }
+    /// The tracked entity nearest to `at` within `max` blocks that could have hurt someone (not items, orbs, frames).
+    pub(super) fn nearest_threat(&self, at: [f64; 3], max: f64) -> Option<i32> {
+        let skip = |k: &str| ["item", "orb", "frame", "painting", "marker", "display", "armor_stand", "interaction", "area_effect", "boat", "minecart"].iter().any(|s| k.contains(s));
+        self.entities
+            .iter()
+            .filter(|(id, e)| **id != self.entity_id && !skip(&e.kind))
+            .map(|(id, e)| (*id, ((e.position[0] - at[0]).powi(2) + (e.position[1] - at[1]).powi(2) + (e.position[2] - at[2]).powi(2)).sqrt()))
+            .filter(|(_, d)| *d <= max)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(id, _)| id)
+    }
+
+    /// Where a tracked entity is.
+    pub(super) fn entity_position(&self, id: i32) -> Option<[f64; 3]> {
+        self.entities.get(&id).map(|e| e.position)
+    }
+
     /// A player entity's profile name: the one it was created with, else its
     /// player-list entry's (an entity the list named after it spawned).
     fn level_player_name(&self, id: i32, uuid: &u128) -> Option<&str> {
