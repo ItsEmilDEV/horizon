@@ -2376,6 +2376,16 @@ impl Game<'_> {
             let rows = slots.iter().map(|(s, _)| s / 9 + 1).max().unwrap_or(1).min(6);
             (rows, slots)
         });
+        // An ender chest item: what the player's ender chest held when it was last opened.
+        let preview = match preview {
+            None if probe.is_none()
+                && &*stack.item == "minecraft:ender_chest"
+                && self.modules_ref().is_some_and(|m| m.misc.container_preview) =>
+            {
+                self.belumi_ender_preview()
+            }
+            other => other,
+        };
         let mut lines = self.stack_tooltip_lines(stack, false, creative, preview.is_none());
         if lines.is_empty() {
             return;

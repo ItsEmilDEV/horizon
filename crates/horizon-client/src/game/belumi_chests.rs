@@ -28,10 +28,19 @@ pub(super) struct Entry {
     pub(super) items: Vec<Slot>,
 }
 
+/// What the ender chest of a world held when it was last open: the items by slot.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub(super) struct EnderEntry {
+    pub(super) scope: String,
+    pub(super) slots: Vec<(u8, Slot)>,
+}
+
 #[derive(Default, Serialize, Deserialize)]
 struct Store {
     #[serde(default, rename = "chest")]
     entries: Vec<Entry>,
+    #[serde(default)]
+    ender: Vec<EnderEntry>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -153,8 +162,36 @@ impl Game<'_> {
             at: now(),
             items: slots.iter().flatten().cloned().collect(),
         };
+        // The ender chest is the player's own, the same wherever it is opened: it gets its own place, not a chest's.
+        if entry.block == "minecraft:ender_chest" {
+            let scope = entry.scope.clone();
+            self.chests_put_ender(&scope, &slots);
+            self.belumi_chests.open = Some((container, entry, slots));
+            return;
+        }
         self.belumi_chests.open = Some((container, entry.clone(), slots));
         self.chests_put(entry);
+    }
+
+    fn chests_put_ender(&mut self, scope: &str, slots: &[Option<Slot>]) {
+        let list: Vec<(u8, Slot)> = slots.iter().enumerate().filter_map(|(i, s)| Some((u8::try_from(i).ok()?, s.clone()?))).collect();
+        let store = self.chests_store();
+        store.ender.retain(|e| e.scope != scope);
+        store.ender.push(EnderEntry { scope: scope.to_owned(), slots: list });
+        self.belumi_chests.dirty = true;
+    }
+
+    /// The items of this world's ender chest as the tooltip draws them: the rows and the stacks by slot.
+    pub(super) fn belumi_ender_preview(&mut self) -> Option<(usize, Vec<(usize, horizon_items::items::ItemStack)>)> {
+        let scope = self.belumi_scope();
+        let entry = self.chests_store().ender.iter().find(|e| e.scope == scope)?.clone();
+        if entry.slots.is_empty() {
+            return None;
+        }
+        let slots: Vec<(usize, horizon_items::items::ItemStack)> =
+            entry.slots.iter().map(|(i, s)| (usize::from(*i), horizon_items::items::ItemStack::new(&s.item, s.count))).collect();
+        let rows = slots.iter().map(|(s, _)| s / 9 + 1).max().unwrap_or(1).min(6);
+        Some((rows, slots))
     }
 
     /// One slot of the open container changed (you moved something in or out).
@@ -167,6 +204,11 @@ impl Game<'_> {
         *cell = item.map(|s| Slot { item: s.item.to_string(), count: s.count });
         entry.items = slots.iter().flatten().cloned().collect();
         entry.at = now();
+        if entry.block == "minecraft:ender_chest" {
+            let (scope, slots) = (entry.scope.clone(), slots.clone());
+            self.chests_put_ender(&scope, &slots);
+            return;
+        }
         let entry = entry.clone();
         self.chests_put(entry);
     }
@@ -182,7 +224,38 @@ impl Game<'_> {
         self.belumi_chests.dirty = true;
     }
 
+    /// While a container is open: its slots are read each frame, because what the player moves in or out is only in the
+    /// client's menu (the server corrects a slot only when the client got it wrong).
+    fn belumi_chests_poll(&mut self) {
+        if self.belumi_chests.open.is_none() {
+            return;
+        }
+        if self.remote.as_ref().is_none_or(|r| r.menu.is_none()) {
+            self.belumi_chests.open = None;
+            return;
+        }
+        let n = self.belumi_chests.open.as_ref().map_or(0, |(_, _, s)| s.len());
+        let fresh: Vec<Option<Slot>> = (0..n)
+            .map(|i| self.slot_view(300 + i).filter(|s| s.count > 0).map(|s| Slot { item: s.item.to_string(), count: s.count }))
+            .collect();
+        let Some((_, entry, slots)) = self.belumi_chests.open.as_mut() else { return };
+        if fresh == *slots {
+            return;
+        }
+        *slots = fresh;
+        entry.items = slots.iter().flatten().cloned().collect();
+        entry.at = now();
+        if entry.block == "minecraft:ender_chest" {
+            let (scope, slots) = (entry.scope.clone(), slots.clone());
+            self.chests_put_ender(&scope, &slots);
+        } else {
+            let entry = entry.clone();
+            self.chests_put(entry);
+        }
+    }
+
     pub(super) fn belumi_chests_tick(&mut self) {
+        self.belumi_chests_poll();
         let due = self.belumi_chests.last_save.is_none_or(|t| t.elapsed() >= Duration::from_secs(5));
         if self.belumi_chests.dirty && due {
             self.chests_save();
@@ -349,6 +422,19 @@ mod tests {
         let text = serde_json::to_string_pretty(&store).unwrap();
         let back: Store = serde_json::from_str(&text).unwrap();
         assert_eq!(back.entries, store.entries);
+    }
+
+    #[test]
+    fn the_ender_chest_is_kept_by_slot_apart_from_the_chests() {
+        let store = Store {
+            entries: vec![entry(1, &[("minecraft:stone", 1)])],
+            ender: vec![EnderEntry { scope: "server:a".into(), slots: vec![(0, Slot { item: "minecraft:diamond".into(), count: 3 }), (13, Slot { item: "minecraft:apple".into(), count: 9 })] }],
+        };
+        let back: Store = serde_json::from_str(&serde_json::to_string_pretty(&store).unwrap()).unwrap();
+        assert_eq!(back.ender, store.ender);
+        // A file from before the ender chest was kept still reads.
+        let old: Store = serde_json::from_str(r#"{"chest":[]}"#).unwrap();
+        assert!(old.ender.is_empty());
     }
 
     #[test]
