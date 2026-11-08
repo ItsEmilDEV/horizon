@@ -5,6 +5,9 @@ use horizon_client::extras::Corner;
 pub(super) struct PluginState {
     #[cfg(feature = "belumi-plugins")]
     host: Option<belumi_client_plugins::Host>,
+    /// What the plugin folder looked like when it was loaded, and when it was last looked at.
+    #[cfg(feature = "belumi-plugins")]
+    signature: Option<(u64, std::time::Instant)>,
     ticks: u64,
     warned: bool,
 }
@@ -79,6 +82,7 @@ mod real {
                 }
             };
             host.load_dir(&dir());
+            self.belumi_plugins.signature = Some((belumi_client_plugins::dir_signature(&dir()), std::time::Instant::now()));
             for e in host.take_errors() {
                 self.native_chat(&format!("Plugin error: {e}"));
             }
@@ -93,6 +97,20 @@ mod real {
             if !wanted && let Some(mut host) = self.belumi_plugins.host.take() {
                 host.shutdown();
                 self.belumi_plugins.warned = false;
+            }
+            // The launcher installs, removes and switches plugins while the game runs: reload when the folder changed.
+            if let Some((seen, at)) = self.belumi_plugins.signature.as_mut()
+                && at.elapsed() >= std::time::Duration::from_secs(2)
+            {
+                *at = std::time::Instant::now();
+                if *seen != belumi_client_plugins::dir_signature(&dir())
+                    && let Some(mut host) = self.belumi_plugins.host.take()
+                {
+                    host.shutdown();
+                    self.belumi_plugins.signature = None;
+                    self.native_chat("Plugins changed: reloading them.");
+                    self.belumi_plugins_load();
+                }
             }
             let Some(host) = self.belumi_plugins.host.as_mut() else {
                 return;
