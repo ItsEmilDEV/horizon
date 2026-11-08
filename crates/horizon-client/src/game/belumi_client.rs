@@ -74,6 +74,7 @@ pub(super) enum Act {
     Trail,
     ChangesOn,
     ChestsOn,
+    CopyJoin,
     CombatOn,
     CombatClear,
     ChestMark(usize),
@@ -603,6 +604,11 @@ impl Game<'_> {
     pub(super) fn belumi_client_command(&mut self, command: &str, ran: &mut bool) {
         let mut parts = command.trim().splitn(2, char::is_whitespace);
         let head = parts.next().unwrap_or("").to_ascii_lowercase();
+        if !*ran && head == "joinlink" {
+            *ran = true;
+            self.belumi_copy_join_link();
+            return;
+        }
         if *ran || !matches!(head.as_str(), "find" | "chatsearch") {
             return;
         }
@@ -621,6 +627,19 @@ impl Game<'_> {
         for line in found {
             self.native_chat(&format!("> {line}"));
         }
+    }
+
+    /// `belumi://join/ADDRESS` for the server the player is on, put on the clipboard.
+    pub(super) fn belumi_copy_join_link(&mut self) {
+        use horizon_client::clipboard::Clipboard;
+        let address = self.belumi_client_server().trim().to_owned();
+        if self.remote.is_none() || address.is_empty() {
+            self.native_chat("Join a server first: the link is for the server you are on.");
+            return;
+        }
+        let link = format!("belumi://join/{address}");
+        self.clipboard.set(&link);
+        self.native_chat(&format!("Copied {link}. A friend with Belumi opens it to join you."));
     }
 
     // ---- opening and closing ------------------------------------------------------------
@@ -1001,6 +1020,7 @@ impl Game<'_> {
             Act::CombatClear => {
                 self.combat_act(&act);
             }
+            Act::CopyJoin => self.belumi_copy_join_link(),
             Act::ChestsOn => {
                 let m = self.modules();
                 m.misc.chest_memory = !m.misc.chest_memory;
@@ -1463,7 +1483,7 @@ impl Game<'_> {
     fn draw_discord_page(&mut self, batch: &mut HudBatch, w: f32, h: f32) {
         self.native_fill(batch, [0.0, 0.0, w, h], 0x9000_0000);
         let pw = 360.0_f32.min(w - 12.0);
-        let ph = (h - 16.0).clamp(190.0, 230.0);
+        let ph = (h - 16.0).clamp(212.0, 252.0);
         let (x, y) = ((w - pw) / 2.0, ((h - ph) / 2.0).floor());
         self.panel(batch, [x, y, pw, ph], "Discord presence");
         self.client_button(batch, [x + pw - 54.0, y + 3.0, 48.0, 14.0], "Back", None, Act::Page(Page::Modules));
@@ -1485,6 +1505,8 @@ impl Game<'_> {
             ry += 22.0;
         }
         ry += 4.0;
+        self.client_button(batch, [x + 10.0, ry, pw - 20.0, 16.0], "Copy join link (belumi://join/...)", None, Act::CopyJoin);
+        ry += 22.0;
         self.native_text(batch, "Address and world name stay hidden until switched on.", [x + 10.0, ry], 0x008A_93A8, false);
         ry += 12.0;
         self.native_text(batch, "Friends see this on your Discord profile while you play.", [x + 10.0, ry], 0x008A_93A8, false);
