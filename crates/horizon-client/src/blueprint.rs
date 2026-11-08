@@ -35,6 +35,78 @@ impl Spec {
     }
 }
 
+/// Which way a transform turns a direction name. `Rotate` is a quarter turn clockwise seen from above (north to east),
+/// `MirrorX` swaps east and west, `MirrorZ` swaps north and south.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Turn {
+    Rotate,
+    MirrorX,
+    MirrorZ,
+}
+
+fn turn_direction(turn: Turn, d: &str) -> String {
+    let swap = |a: &str, b: &str| if d == a { b.to_owned() } else if d == b { a.to_owned() } else { d.to_owned() };
+    match turn {
+        Turn::Rotate => match d {
+            "north" => "east",
+            "east" => "south",
+            "south" => "west",
+            "west" => "north",
+            other => other,
+        }
+        .to_owned(),
+        Turn::MirrorX => swap("east", "west"),
+        Turn::MirrorZ => swap("north", "south"),
+    }
+}
+
+impl Spec {
+    /// The same block state after the plan is turned: facings, axes, signs' and banners' rotation, the four sides of a fence
+    /// or wall, and the left and right of a stair, a door hinge and a chest when mirrored.
+    pub fn turned(&self, turn: Turn) -> Self {
+        let mut out = self.clone();
+        let mirrored = turn != Turn::Rotate;
+        for (key, value) in &self.properties {
+            let new = match key.as_str() {
+                "facing" | "horizontal_facing" => turn_direction(turn, value),
+                "axis" if turn == Turn::Rotate => match value.as_str() {
+                    "x" => "z".to_owned(),
+                    "z" => "x".to_owned(),
+                    other => other.to_owned(),
+                },
+                "rotation" => {
+                    let r: i32 = value.parse().unwrap_or(0);
+                    match turn {
+                        Turn::Rotate => ((r + 4).rem_euclid(16)).to_string(),
+                        Turn::MirrorX => ((16 - r).rem_euclid(16)).to_string(),
+                        Turn::MirrorZ => ((8 - r).rem_euclid(16)).to_string(),
+                    }
+                }
+                "hinge" | "type" if mirrored && matches!(value.as_str(), "left" | "right") => if value == "left" { "right" } else { "left" }.to_owned(),
+                "shape" if mirrored => value.replace("left", "\0").replace("right", "left").replace("\0", "right"),
+                _ => value.clone(),
+            };
+            out.properties.insert(key.clone(), new);
+        }
+        // The four sides of a fence, wall, pane or dust: the value on a side moves to the side it is turned to.
+        let sides = ["north", "east", "south", "west"];
+        if sides.iter().any(|s| self.properties.contains_key(*s)) {
+            for s in sides {
+                if let Some(v) = self.properties.get(s) {
+                    out.properties.remove(s);
+                    let _ = v;
+                }
+            }
+            for s in sides {
+                if let Some(v) = self.properties.get(s) {
+                    out.properties.insert(turn_direction(turn, s), v.clone());
+                }
+            }
+        }
+        out
+    }
+}
+
 /// A plan: its size and a palette index for every cell, `x + z * size_x + y * size_x * size_z`.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub struct Blueprint {
@@ -68,6 +140,28 @@ impl Blueprint {
 
     pub fn spec_at(&self, x: i32, y: i32, z: i32) -> Option<&Spec> {
         self.palette.get(usize::from(*self.cells.get(self.index(x, y, z)?)?))
+    }
+
+    /// The plan turned: a quarter turn clockwise seen from above, or mirrored. The cells move and the block states with them.
+    pub fn turned(&self, turn: Turn) -> Self {
+        let [sx, sy, sz] = self.size;
+        let size = if turn == Turn::Rotate { [sz, sy, sx] } else { self.size };
+        let mut cells = vec![0u16; self.cells.len()];
+        for y in 0..sy {
+            for z in 0..sz {
+                for x in 0..sx {
+                    let from = (x + z * sx + y * sx * sz) as usize;
+                    let (nx, nz) = match turn {
+                        Turn::Rotate => (sz - 1 - z, x),
+                        Turn::MirrorX => (sx - 1 - x, z),
+                        Turn::MirrorZ => (x, sz - 1 - z),
+                    };
+                    let to = (nx + nz * size[0] + y * size[0] * size[2]) as usize;
+                    cells[to] = self.cells[from];
+                }
+            }
+        }
+        Self { size, palette: self.palette.iter().map(|s| s.turned(turn)).collect(), cells }
     }
 
     /// How many cells of each block the plan needs (air left out), most first.
@@ -430,6 +524,53 @@ mod tests {
         assert_eq!(plan.size, [4, 1, 1]);
         let names: Vec<&str> = (0..4).map(|x| plan.spec_at(x, 0, 0).unwrap().name.as_str()).collect();
         assert_eq!(names, ["minecraft:stone", "minecraft:air", "minecraft:glass", "minecraft:glass"]);
+    }
+
+    fn spec(text: &str) -> Spec {
+        Spec::parse(text)
+    }
+
+    #[test]
+    fn a_quarter_turn_moves_the_cells_and_turns_the_facings() {
+        // 2 x 1 x 3: a stair facing north at (0, 0, 0) (the north-west corner).
+        let plan = Blueprint { size: [2, 1, 3], palette: vec![spec("minecraft:air"), spec("minecraft:oak_stairs[facing=north]")], cells: vec![1, 0, 0, 0, 0, 0] };
+        let turned = plan.turned(Turn::Rotate);
+        assert_eq!(turned.size, [3, 1, 2]);
+        // The north-west corner is the north-east corner after turning clockwise, and it faces east now.
+        let s = turned.spec_at(2, 0, 0).unwrap();
+        assert_eq!(s.properties.get("facing").map(String::as_str), Some("east"));
+        assert_eq!(turned.materials(), plan.materials());
+    }
+
+    #[test]
+    fn four_quarter_turns_and_two_mirrors_give_the_plan_back() {
+        let palette = vec![spec("minecraft:air"), spec("minecraft:oak_stairs[facing=north,shape=inner_left,half=bottom]"), spec("minecraft:oak_fence[north=true,east=false,south=false,west=true]"), spec("minecraft:oak_log[axis=x]"), spec("minecraft:oak_sign[rotation=3]")];
+        let cells: Vec<u16> = (0..2 * 2 * 3).map(|i| (i % 5) as u16).collect();
+        let plan = Blueprint { size: [2, 2, 3], palette, cells };
+        let mut t = plan.clone();
+        for _ in 0..4 {
+            t = t.turned(Turn::Rotate);
+        }
+        assert_eq!(t, plan);
+        assert_eq!(plan.turned(Turn::MirrorX).turned(Turn::MirrorX), plan);
+        assert_eq!(plan.turned(Turn::MirrorZ).turned(Turn::MirrorZ), plan);
+    }
+
+    #[test]
+    fn states_turn_with_the_plan() {
+        let t = |s: &str, turn| spec(s).turned(turn).properties;
+        let get = |m: &BTreeMap<String, String>, k: &str| m.get(k).cloned().unwrap_or_default();
+        assert_eq!(get(&t("minecraft:chest[facing=south,type=left]", Turn::Rotate), "facing"), "west");
+        assert_eq!(get(&t("minecraft:chest[facing=south,type=left]", Turn::MirrorX), "type"), "right");
+        assert_eq!(get(&t("minecraft:oak_log[axis=x]", Turn::Rotate), "axis"), "z");
+        assert_eq!(get(&t("minecraft:oak_log[axis=y]", Turn::Rotate), "axis"), "y");
+        assert_eq!(get(&t("minecraft:oak_sign[rotation=0]", Turn::Rotate), "rotation"), "4");
+        assert_eq!(get(&t("minecraft:oak_sign[rotation=4]", Turn::MirrorX), "rotation"), "12");
+        assert_eq!(get(&t("minecraft:oak_stairs[shape=outer_left]", Turn::MirrorZ), "shape"), "outer_right");
+        let fence = t("minecraft:oak_fence[north=true,east=false,south=false,west=false]", Turn::Rotate);
+        assert_eq!((get(&fence, "east"), get(&fence, "north")), ("true".to_owned(), "false".to_owned()));
+        assert_eq!(get(&t("minecraft:oak_door[facing=north,hinge=left]", Turn::MirrorX), "hinge"), "right");
+        assert_eq!(get(&t("minecraft:lever[face=wall,facing=east]", Turn::MirrorX), "facing"), "west");
     }
 
     #[test]

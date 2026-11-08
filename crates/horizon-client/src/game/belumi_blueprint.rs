@@ -2,7 +2,7 @@
 //! blocks are missing (cyan) or wrong (red), with a material list. `/blueprint list|load NAME|place|here|move X Y Z|layer N|off`.
 use super::{Game, belumi_client::{Act, Page}};
 use horizon_client::{
-    blueprint::{Blueprint, Status, status},
+    blueprint::{Blueprint, Status, Turn, status},
     gizmos::Line,
     hud::HudBatch,
 };
@@ -79,6 +79,7 @@ pub(super) enum Cmd {
     Here,
     Move([i32; 3]),
     Layer(Option<i32>),
+    Turn(horizon_client::blueprint::Turn),
     Off,
 }
 
@@ -92,6 +93,9 @@ pub(super) fn parse(args: &str) -> Option<Cmd> {
         ("place", []) => Some(Cmd::Place),
         ("here", []) => Some(Cmd::Here),
         ("off", []) => Some(Cmd::Off),
+        ("rotate", []) => Some(Cmd::Turn(Turn::Rotate)),
+        ("mirror", ["x"]) => Some(Cmd::Turn(Turn::MirrorX)),
+        ("mirror", ["z"]) => Some(Cmd::Turn(Turn::MirrorZ)),
         ("move", [x, y, z]) => Some(Cmd::Move([x.parse().ok()?, y.parse().ok()?, z.parse().ok()?])),
         ("layer", ["all"]) => Some(Cmd::Layer(None)),
         ("layer", [n]) => Some(Cmd::Layer(Some(n.parse().ok().filter(|n| *n >= 0)?))),
@@ -228,7 +232,7 @@ impl Game<'_> {
         }
         *ran = true;
         let Some(cmd) = parse(rest) else {
-            self.native_chat("Usage: /blueprint list | load NAME | place | here | move X Y Z | layer N|all | off");
+            self.native_chat("Usage: /blueprint list | load NAME | place | here | move X Y Z | rotate | mirror x|z | layer N|all | off");
             return;
         };
         match cmd {
@@ -275,6 +279,16 @@ impl Game<'_> {
                     self.native_chat(&layer.map_or("Showing every level.".to_owned(), |n| format!("Showing level {n} (0 is the bottom).")));
                 }
             }
+            Cmd::Turn(turn) => match self.belumi_plans.loaded.as_mut() {
+                Some(l) => {
+                    l.plan = Arc::new(l.plan.turned(turn));
+                    let size = l.plan.size;
+                    self.belumi_plans.scanned = None;
+                    self.belumi_plans.totals_at = None;
+                    self.native_chat(&format!("The plan is {} x {} x {} now; its corner stays where it was.", size[0], size[1], size[2]));
+                }
+                None => self.native_chat("Load a plan first: /blueprint load NAME."),
+            },
             Cmd::Off => {
                 self.belumi_plans = Plans::default();
                 self.native_chat("The plan is hidden.");
@@ -385,6 +399,10 @@ mod tests {
         assert_eq!(parse("move 1 -2 3"), Some(Cmd::Move([1, -2, 3])));
         assert_eq!(parse("layer 4"), Some(Cmd::Layer(Some(4))));
         assert_eq!(parse("layer all"), Some(Cmd::Layer(None)));
+        assert_eq!(parse("rotate"), Some(Cmd::Turn(Turn::Rotate)));
+        assert_eq!(parse("mirror x"), Some(Cmd::Turn(Turn::MirrorX)));
+        assert_eq!(parse("mirror z"), Some(Cmd::Turn(Turn::MirrorZ)));
+        assert_eq!(parse("mirror y"), None);
         for bad in ["load", "move 1 2", "move a b c", "layer -1", "layer x", "place now", "fly"] {
             assert_eq!(parse(bad), None, "{bad}");
         }
