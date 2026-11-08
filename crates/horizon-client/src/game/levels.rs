@@ -390,7 +390,8 @@ impl Game<'_> {
     /// tick longer than MS is logged with its thread CPU time and spans.
     pub(super) fn tick_server_timed(&mut self, paused: bool) -> Result<()> {
         let profiling = horizon_client::belumi_profile::enabled();
-        if self.options.spikes.is_none() && !profiling {
+        let live = horizon_client::belumi_profile::live();
+        if self.options.spikes.is_none() && !profiling && !live {
             return self.tick_server(paused);
         }
         let threshold = self.options.spikes.unwrap_or(f32::INFINITY);
@@ -401,6 +402,9 @@ impl Game<'_> {
         let spans = horizon_client::spans::take();
         if profiling {
             horizon_client::belumi_profile::record_tick(wall, &spans);
+        }
+        if live {
+            horizon_client::belumi_profile::publish(wall, &spans);
         }
         if wall > threshold {
             let cpu = horizon_client::spans::thread_cpu()

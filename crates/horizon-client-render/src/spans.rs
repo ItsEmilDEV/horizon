@@ -39,9 +39,20 @@ pub fn time<T>(name: &'static str, f: impl FnOnce() -> T) -> T {
     let cpu_ms = thread_cpu()
         .zip(cpu)
         .map_or(ms, |(end, start)| (end - start).as_secs_f32() * 1000.0);
-    SPANS.with(|s| s.borrow_mut().push(Span { name, ms, cpu_ms }));
+    push(Span { name, ms, cpu_ms });
     out
 }
+/// Spans nobody takes (a worker thread's) must not pile up: only the newest ones are kept.
+fn push(span: Span) {
+    SPANS.with(|s| {
+        let mut s = s.borrow_mut();
+        if s.len() >= MAX_PENDING {
+            s.clear();
+        }
+        s.push(span);
+    });
+}
+const MAX_PENDING: usize = 8192;
 #[inline]
 pub fn start() -> Option<(Instant, Option<Duration>)> {
     ENABLED.load(Ordering::Relaxed).then(|| (Instant::now(), thread_cpu()))
@@ -53,7 +64,7 @@ pub fn stop(name: &'static str, started: Option<(Instant, Option<Duration>)>) {
     let cpu_ms = thread_cpu()
         .zip(cpu)
         .map_or(ms, |(end, start)| (end - start).as_secs_f32() * 1000.0);
-    SPANS.with(|s| s.borrow_mut().push(Span { name, ms, cpu_ms }));
+    push(Span { name, ms, cpu_ms });
 }
 /// The CPU time this thread has used, where the platform tells it: a tick
 /// with more wall time than CPU time waited (for a lock, or for a core on a

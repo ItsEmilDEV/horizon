@@ -36,6 +36,7 @@ pub(super) enum Page {
     Changes,
     Chests,
     Combat,
+    Redstone,
     Plugin,
     Replays,
     Replay,
@@ -78,6 +79,8 @@ pub(super) enum Act {
     CombatOn,
     SoundOn,
     HistoryOn,
+    RedstoneNumbers,
+    TickCmd(&'static str),
     CombatClear,
     ChestMark(usize),
     ChangeMark(usize),
@@ -429,6 +432,16 @@ impl Game<'_> {
                     text(&mut draws, line, 4.0 + pad, y + 1.0, *color);
                 }
                 (w, h) = (bw, bh);
+            }
+            "profiler" => {
+                let lines = self.belumi_profiler_lines();
+                let tw = lines.iter().map(|l| HudBatch::text_width(&self.gui.atlas, &l.0)).fold(0.0, f32::max);
+                let (bw, bh) = (tw + 8.0, lines.len() as f32 * 10.0 + 4.0);
+                fill(&mut draws, 0.0, 0.0, bw, bh, 0x9000_0000);
+                for (i, (line, color)) in lines.iter().enumerate() {
+                    text(&mut draws, line, 4.0, 3.0 + i as f32 * 10.0, *color);
+                }
+                (w, h, empty) = (bw, bh, false);
             }
             "armor" => {
                 let slots: Vec<Option<ItemStack>> = vec![
@@ -1014,6 +1027,9 @@ impl Game<'_> {
             Act::PluginOpen(plugin) => self.belumi_client.plugin_page = Some(plugin),
             Act::PluginPress(plugin, id, value) => self.belumi_plugin_press(&plugin, &id, value),
             Act::PickAccount(i) => self.belumi_switch_account(i),
+            Act::RedstoneNumbers | Act::TickCmd(_) => {
+                self.redstone_act(&act);
+            }
             Act::HistoryOn => {
                 let m = self.modules();
                 m.misc.world_history = !m.misc.world_history;
@@ -1198,6 +1214,7 @@ impl Game<'_> {
             Page::Changes => self.draw_changes_page(batch, w, h),
             Page::Chests => self.draw_chests_page(batch, w, h),
             Page::Combat => self.draw_combat_page(batch, w, h),
+            Page::Redstone => self.draw_redstone_page(batch, w, h),
             Page::Replays => self.draw_replays_page(batch, w, h),
             Page::Replay => self.draw_replay_controls_page(batch, w, h),
         }
@@ -1358,6 +1375,7 @@ impl Game<'_> {
             ("Shulker preview".into(), "Contents in the tooltip".into(), Some(m.misc.container_preview), Act::ContainerPreview, None),
             ("World history".into(), "Older chunk versions, /rollback".into(), Some(m.misc.world_history), Act::HistoryOn, None),
             ("Sound physics".into(), "Reverb of the room you are in".into(), Some(m.misc.sound_physics), Act::SoundOn, None),
+            ("Redstone workbench".into(), "Signals, /tick controls".into(), None, Act::Page(Page::Redstone), Some(Page::Redstone)),
             ("Combat log".into(), "Swings, hits, damage, CPS".into(), Some(m.misc.combat), Act::CombatOn, Some(Page::Combat)),
             ("Chest memory".into(), "Find items with /chests".into(), Some(m.misc.chest_memory), Act::ChestsOn, Some(Page::Chests)),
             ("Changes".into(), "What changed since your last visit".into(), Some(m.misc.changes), Act::ChangesOn, Some(Page::Changes)),

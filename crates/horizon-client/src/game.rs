@@ -55,6 +55,7 @@ mod belumi_client;
 mod belumi_replay;
 mod belumi_freecam;
 mod belumi_accounts;
+mod belumi_redstone;
 mod belumi_history;
 mod belumi_sound;
 mod belumi_combat;
@@ -2134,6 +2135,7 @@ struct Game<'a> {
     belumi_photo: belumi_photo::Photo,
     belumi_combat: belumi_combat::Combat,
     belumi_sound: belumi_sound::Sound,
+    belumi_redstone: belumi_redstone::Redstone,
     belumi_free: belumi_freecam::FreecamState,
     belumi_client: belumi_client::ClientState,
     belumi_replay: belumi_replay::ReplayState,
@@ -15249,6 +15251,7 @@ impl<'a> Game<'a> {
             belumi_photo: Default::default(),
             belumi_combat: Default::default(),
             belumi_sound: Default::default(),
+            belumi_redstone: Default::default(),
             belumi_free: Default::default(),
             belumi_client: Default::default(),
             belumi_replay: Default::default(),

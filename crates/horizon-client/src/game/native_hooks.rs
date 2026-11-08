@@ -321,6 +321,7 @@ impl Game<'_> {
         self.belumi_chests_tick();
         self.belumi_combat_tick();
         self.belumi_sound_frame();
+        self.belumi_redstone_frame();
         self.belumi_history_switch();
     }
     /// Once a tick, in every `Game`: the window's (in single player, on LAN
@@ -359,6 +360,7 @@ impl Game<'_> {
         self.belumi_hud(batch, corners);
         self.belumi_draw_labels(batch);
         self.belumi_draw_trail(batch);
+        self.belumi_draw_redstone(batch);
         self.belumi_modules_draw(batch);
         self.belumi_draw_worldmap(batch);
     }

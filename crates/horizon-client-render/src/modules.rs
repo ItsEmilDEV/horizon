@@ -8,7 +8,7 @@ use std::{collections::BTreeMap, fs, path::Path};
 pub const FILE: &str = "belumi-modules.toml";
 
 /// The HUD modules, in the order the builder lists them.
-pub const HUD_IDS: [&str; 11] = ["keystrokes", "cps", "armor", "effects", "clock", "rec", "inventory", "fps", "ping", "coords", "compass"];
+pub const HUD_IDS: [&str; 12] = ["keystrokes", "cps", "armor", "effects", "clock", "rec", "inventory", "fps", "ping", "coords", "compass", "profiler"];
 
 pub fn hud_title(id: &str) -> &'static str {
     match id {
@@ -23,6 +23,7 @@ pub fn hud_title(id: &str) -> &'static str {
         "ping" => "Ping",
         "coords" => "Coordinates",
         "compass" => "Compass",
+        "profiler" => "Profiler",
         _ => "Module",
     }
 }
@@ -284,6 +285,8 @@ pub struct Misc {
     pub sound_physics: bool,
     /// Keep older versions of the chunks a world saves over (`/rollback`).
     pub world_history: bool,
+    /// The signal strength written over redstone dust and its relatives.
+    pub redstone_numbers: bool,
     /// What the compass module points at: a waypoint's name, `back` for where the trail began, empty for the nearest.
     pub compass_target: String,
     pub low_durability_warning: bool,
@@ -303,6 +306,7 @@ impl Default for Misc {
             combat: true,
             sound_physics: false,
             world_history: true,
+            redstone_numbers: false,
             compass_target: String::new(),
             low_durability_warning: true,
         }
@@ -365,6 +369,7 @@ fn default_placed(id: &str) -> Placed {
         "ping" => (0.02, 0.08),
         "coords" => (0.02, 0.14),
         "compass" => (0.5, 0.08),
+        "profiler" => (0.75, 0.3),
         _ => (0.98, 0.02),
     };
     Placed { id: id.into(), enabled: false, nx, ny, scale: 1.0, opt: BTreeMap::new(), bg: 100 }

@@ -93,6 +93,61 @@ pub fn enabled() -> bool {
 
 static PROFILER: Mutex<Option<Profiler>> = Mutex::new(None);
 
+/// The live view for the Profiler HUD module: the server tick's time and its biggest spans, smoothed over about ten ticks.
+static LIVE_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static LIVE: Mutex<Live> = Mutex::new(Live { tick_ms: 0.0, spans: Vec::new() });
+
+#[derive(Default)]
+struct Live {
+    tick_ms: f32,
+    spans: Vec<(&'static str, f32)>,
+}
+
+impl Live {
+    fn blend(&mut self, wall_ms: f32, spans: &[Span]) {
+        const K: f32 = 0.1;
+        self.tick_ms += (wall_ms - self.tick_ms) * K;
+        for (name, v) in self.spans.iter_mut() {
+            let now = spans.iter().find(|s| s.name == *name).map_or(0.0, |s| s.ms);
+            *v += (now - *v) * K;
+        }
+        for s in spans {
+            if !self.spans.iter().any(|(n, _)| *n == s.name) {
+                self.spans.push((s.name, s.ms * K));
+            }
+        }
+        self.spans.retain(|(_, v)| *v >= 0.005);
+    }
+}
+
+/// The Profiler module asks for the server tick's spans (or stops asking).
+pub fn set_live(on: bool) {
+    LIVE_ON.store(on, std::sync::atomic::Ordering::Relaxed);
+    if on {
+        horizon_client_render::spans::enable(true);
+    }
+}
+
+pub fn live() -> bool {
+    LIVE_ON.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// A finished server tick's time and spans, for the live view.
+pub fn publish(wall_ms: f32, spans: &[Span]) {
+    if let Ok(mut l) = LIVE.lock() {
+        l.blend(wall_ms, spans);
+    }
+}
+
+/// The smoothed tick time and the `count` biggest spans, biggest first.
+pub fn live_snapshot(count: usize) -> (f32, Vec<(&'static str, f32)>) {
+    let Ok(l) = LIVE.lock() else { return (0.0, Vec::new()) };
+    let mut spans = l.spans.clone();
+    spans.sort_by(|a, b| b.1.total_cmp(&a.1));
+    spans.truncate(count);
+    (l.tick_ms, spans)
+}
+
 pub fn record_tick(wall_ms: f32, spans: &[Span]) {
     let Some(period) = period() else { return };
     let now = Instant::now();
@@ -109,6 +164,22 @@ mod tests {
 
     fn span(name: &'static str, ms: f32) -> Span {
         Span { name, ms, cpu_ms: ms }
+    }
+
+    #[test]
+    fn the_live_view_smooths_and_forgets_spans_that_stopped() {
+        let mut l = Live::default();
+        for _ in 0..60 {
+            l.blend(10.0, &[span("chunks", 4.0), span("mobs", 1.0)]);
+        }
+        assert!((l.tick_ms - 10.0).abs() < 0.2);
+        let get = |l: &Live, n: &str| l.spans.iter().find(|(x, _)| *x == n).map(|(_, v)| *v);
+        assert!((get(&l, "chunks").unwrap() - 4.0).abs() < 0.2);
+        for _ in 0..200 {
+            l.blend(2.0, &[span("mobs", 1.0)]);
+        }
+        assert!(get(&l, "chunks").is_none(), "a span that is gone fades out of the list");
+        assert!((get(&l, "mobs").unwrap() - 1.0).abs() < 0.05);
     }
 
     #[test]
