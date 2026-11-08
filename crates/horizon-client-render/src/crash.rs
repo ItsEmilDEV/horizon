@@ -695,14 +695,22 @@ mod tests {
         assert_eq!(CONTAINED.with(Cell::get), 0);
     }
 
+    /// Whether this build's backtraces name source files (not so in the `fast` profile, which has no debug information).
+    fn has_source_locations() -> bool {
+        std::backtrace::Backtrace::force_capture().to_string().contains("crash.rs")
+    }
+
     #[test]
     fn the_debug_crash_is_reported_as_vanillas() {
         let error: Box<dyn std::error::Error> = DebugCrash::new().into();
         assert_eq!(error.to_string(), "Manually triggered debug crash");
         let debug = error.downcast_ref::<DebugCrash>().unwrap();
-        // The stack starts where the crash was raised (DebugCrash::new, in this file).
-        let first = debug.stack.lines().next().unwrap();
-        assert!(first.contains("crash.rs"), "{}", debug.stack);
+        // The stack starts where the crash was raised (DebugCrash::new, in this file). A build without debug information
+        // (the `fast` profile) has no file names in its backtraces: then there is nothing to read here.
+        if has_source_locations() {
+            let first = debug.stack.lines().next().unwrap();
+            assert!(first.contains("crash.rs"), "{}", debug.stack);
+        }
     }
 
     #[test]
@@ -720,10 +728,12 @@ mod tests {
         std::panic::set_hook(previous);
         let report = caught.lock().unwrap().take().expect("the hook ran");
         assert!(report.error.contains("the test crash"));
-        assert!(report.error.contains("crash.rs"));
-        // The first frame is the test's own code, not the panic machinery.
-        let first = report.stack.lines().next().unwrap();
-        assert!(first.contains("crash.rs"), "{}", report.stack);
+        // The first frame is the test's own code, not the panic machinery (when the build has file names to show).
+        if has_source_locations() {
+            assert!(report.error.contains("crash.rs"));
+            let first = report.stack.lines().next().unwrap();
+            assert!(first.contains("crash.rs"), "{}", report.stack);
+        }
         let text = report.text();
         assert!(text.contains("Description: Unexpected error"));
         assert!(text.contains(&format!(
