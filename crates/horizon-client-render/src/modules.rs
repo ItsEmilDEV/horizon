@@ -292,6 +292,8 @@ pub struct Misc {
     /// Accurate block placement: no wait between blocks placed with the right button held, none between blocks broken in
     /// creative (`accurate_break`).
     pub accurate_placement: bool,
+    /// An X on the floor where monsters can spawn: red where it is always dark, yellow where only the night is.
+    pub light_overlay: bool,
     pub accurate_break: bool,
     pub accurate_key: String,
     pub ping_key: String,
@@ -317,6 +319,7 @@ impl Default for Misc {
             redstone_numbers: false,
             pings: true,
             accurate_placement: false,
+            light_overlay: false,
             accurate_break: true,
             accurate_key: String::new(),
             ping_key: "key.keyboard.z".into(),

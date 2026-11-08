@@ -83,6 +83,7 @@ pub(super) enum Act {
     RedstoneNumbers,
     PingsOn,
     AccurateOn,
+    LightOn,
     AccurateBreak,
     BlueprintLayer(i32),
     TickCmd(&'static str),
@@ -1037,6 +1038,11 @@ impl Game<'_> {
             Act::BlueprintLayer(_) => {
                 self.blueprint_act(&act);
             }
+            Act::LightOn => {
+                let m = self.modules();
+                m.misc.light_overlay = !m.misc.light_overlay;
+                self.modules_changed();
+            }
             Act::AccurateOn => self.belumi_placement_toggle(),
             Act::AccurateBreak => {
                 let m = self.modules();
@@ -1397,6 +1403,7 @@ impl Game<'_> {
             ("Shulker preview".into(), "Contents in the tooltip".into(), Some(m.misc.container_preview), Act::ContainerPreview, None),
             ("World history".into(), "Older chunk versions, /rollback".into(), Some(m.misc.world_history), Act::HistoryOn, None),
             ("Sound physics".into(), "Reverb of the room you are in".into(), Some(m.misc.sound_physics), Act::SoundOn, None),
+            ("Light overlay".into(), "X where monsters can spawn".into(), Some(m.misc.light_overlay), Act::LightOn, None),
             ("Accurate placement".into(), "Fast blocks (some servers: cheat)".into(), Some(m.misc.accurate_placement), Act::AccurateOn, None),
             ("Accurate creative break".into(), "No wait between breaks".into(), Some(m.misc.accurate_break), Act::AccurateBreak, None),
             ("Pings".into(), "Z marks a spot for friends".into(), Some(m.misc.pings), Act::PingsOn, None),
