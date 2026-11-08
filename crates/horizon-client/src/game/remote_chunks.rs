@@ -60,7 +60,7 @@ impl ChunkFormat {
     }
 
     /// LevelChunkSection data into the client's column.
-    fn column(&self, p: &play::LevelChunkWithLight) -> Result<Chunk, String> {
+    pub(super) fn column(&self, p: &play::LevelChunkWithLight) -> Result<Chunk, String> {
         let sections = p
             .chunk
             .sections(self.sections, 16, self.biome_bits)
@@ -282,6 +282,7 @@ impl Game<'_> {
             }
         };
         let (x, z) = (p.x, p.z);
+        self.belumi_distant_received(p);
         self.streaming.insert_remote(&mut self.world, chunk);
         self.world
             .block_entities

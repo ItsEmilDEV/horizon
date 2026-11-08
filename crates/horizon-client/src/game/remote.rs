@@ -1439,6 +1439,8 @@ impl Game<'_> {
             .copied()
             .filter(|&(x, z)| !self.remote_chunk_in_range(x, z))
             .collect();
+        let gone: horizon_client::fast_hash::FxHashSet<(i32, i32)> =
+            gone.into_iter().filter(|&(x, z)| !self.belumi_distant_keep(x, z)).collect();
         if gone.is_empty() {
             return;
         }
@@ -2232,6 +2234,9 @@ impl Game<'_> {
             C::ChunksBiomes(p) => self.remote_chunks_biomes(&p),
             C::ForgetLevelChunk(p) => {
                 let [x, z] = p.pos;
+                if self.belumi_distant_keep(x, z) {
+                    return Ok(());
+                }
                 self.streaming.forget(&mut self.world, x, z);
                 self.world
                     .block_entities
@@ -3474,7 +3479,7 @@ impl Game<'_> {
             },
             C::SetPlayerTeam(p) => self.remote_team(p),
             C::SetChunkCacheRadius(p) => {
-                self.streaming.radius = self.settings.render_distance.min(p.distance + 1).max(2);
+                self.streaming.radius = self.belumi_distant_radius(p.distance);
                 if let Some(r) = self.remote.as_mut() {
                     r.view_distance = p.distance;
                 }

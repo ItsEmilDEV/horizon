@@ -269,6 +269,8 @@ pub struct Misc {
     pub tooltips: bool,
     /// A shulker box's tooltip shows its contents as a grid.
     pub container_preview: bool,
+    /// Columns a server sent stay drawn after it forgot them and are cached for the next visit.
+    pub distant_chunks: bool,
     pub low_durability_warning: bool,
 }
 
@@ -279,6 +281,7 @@ impl Default for Misc {
             freelook_key: "key.keyboard.left.alt".into(),
             tooltips: false,
             container_preview: true,
+            distant_chunks: true,
             low_durability_warning: true,
         }
     }

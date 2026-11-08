@@ -65,6 +65,7 @@ pub(super) enum Act {
     FocusBox(usize),
     Tooltips,
     ContainerPreview,
+    DistantChunks,
     Reconnect,
     Warning,
     Extra(&'static str),
@@ -932,6 +933,11 @@ impl Game<'_> {
                 m.misc.tooltips = !m.misc.tooltips;
                 self.modules_changed();
             }
+            Act::DistantChunks => {
+                let m = self.modules();
+                m.misc.distant_chunks = !m.misc.distant_chunks;
+                self.modules_changed();
+            }
             Act::ContainerPreview => {
                 let m = self.modules();
                 m.misc.container_preview = !m.misc.container_preview;
@@ -1224,6 +1230,7 @@ impl Game<'_> {
             ("Crosshair".into(), "Your own shape and colour".into(), Some(m.crosshair.enabled), Act::CrosshairOn, Some(Page::Crosshair)),
             ("Item tooltips".into(), "Item id and durability numbers".into(), Some(m.misc.tooltips), Act::Tooltips, None),
             ("Shulker preview".into(), "Contents in the tooltip".into(), Some(m.misc.container_preview), Act::ContainerPreview, None),
+            ("Distant chunks".into(), "Keep far chunks, cache them".into(), Some(m.misc.distant_chunks), Act::DistantChunks, None),
             ("Break warning".into(), "Flash when gear is low".into(), Some(m.misc.low_durability_warning), Act::Warning, None),
             ("Discord presence".into(), "What your profile shows".into(), Some(self.settings.extras.discord_presence), Act::Extra("discord"), Some(Page::Discord)),
             ("Chat tools".into(), "Time, filter, sound".into(), None, Act::Page(Page::Chat), Some(Page::Chat)),

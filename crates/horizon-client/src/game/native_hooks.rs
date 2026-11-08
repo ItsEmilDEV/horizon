@@ -314,6 +314,7 @@ impl Game<'_> {
         self.belumi_freecam_frame(elapsed.as_secs_f32());
         self.modules_tick();
         self.belumi_explore(elapsed.as_secs_f32());
+        self.belumi_distant_tick();
     }
     /// Once a tick, in every `Game`: the window's (in single player, on LAN
     /// and on servers), and the server's own (`native_window` is false
