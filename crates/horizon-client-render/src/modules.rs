@@ -295,6 +295,10 @@ pub struct Misc {
     pub accurate_placement: bool,
     /// An X on the floor where monsters can spawn: red where it is always dark, yellow where only the night is.
     pub light_overlay: bool,
+    /// Brightness added to the options slider, 0 to 15 steps; a key cycles it, another switches fullbright.
+    pub gamma_level: u8,
+    pub gamma_key: String,
+    pub fullbright_key: String,
     pub accurate_break: bool,
     pub accurate_key: String,
     pub ping_key: String,
@@ -321,6 +325,9 @@ impl Default for Misc {
             pings: true,
             accurate_placement: false,
             light_overlay: false,
+            gamma_level: 0,
+            gamma_key: String::new(),
+            fullbright_key: String::new(),
             accurate_break: true,
             accurate_key: String::new(),
             ping_key: "key.keyboard.z".into(),

@@ -325,6 +325,7 @@ impl Game<'_> {
         self.belumi_export_frame();
         self.belumi_blueprint_frame();
         self.belumi_light_frame();
+        self.belumi_gamma_frame();
         self.belumi_history_switch();
     }
     /// Once a tick, in every `Game`: the window's (in single player, on LAN

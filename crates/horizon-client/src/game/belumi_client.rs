@@ -84,6 +84,7 @@ pub(super) enum Act {
     PingsOn,
     AccurateOn,
     LightOn,
+    GammaCycle,
     AccurateBreak,
     BlueprintLayer(i32),
     TickCmd(&'static str),
@@ -683,6 +684,7 @@ impl Game<'_> {
         self.belumi_photo_key(key, pressed);
         self.belumi_ping_key(key, pressed);
         self.belumi_placement_key(key, pressed);
+        self.belumi_gamma_key(key, pressed);
         let menu_key = self.modules().menu_key.clone();
         if pressed && key == menu_key && self.native_playing() {
             self.client_open();
@@ -1050,6 +1052,7 @@ impl Game<'_> {
             Act::BlueprintLayer(_) => {
                 self.blueprint_act(&act);
             }
+            Act::GammaCycle => self.belumi_gamma_cycle(),
             Act::LightOn => {
                 let m = self.modules();
                 m.misc.light_overlay = !m.misc.light_overlay;
@@ -1415,6 +1418,7 @@ impl Game<'_> {
             ("Shulker preview".into(), "Contents in the tooltip".into(), Some(m.misc.container_preview), Act::ContainerPreview, None),
             ("World history".into(), "Older chunk versions, /rollback".into(), Some(m.misc.world_history), Act::HistoryOn, None),
             ("Sound physics".into(), "Reverb of the room you are in".into(), Some(m.misc.sound_physics), Act::SoundOn, None),
+            ("Gamma boost".into(), format!("Brightness beyond the slider: {} of 15", m.misc.gamma_level), Some(m.misc.gamma_level > 0), Act::GammaCycle, None),
             ("Light overlay".into(), "X where monsters can spawn".into(), Some(m.misc.light_overlay), Act::LightOn, None),
             ("Accurate placement".into(), "Fast blocks (some servers: cheat)".into(), Some(m.misc.accurate_placement), Act::AccurateOn, None),
             ("Accurate creative break".into(), "No wait between breaks".into(), Some(m.misc.accurate_break), Act::AccurateBreak, None),
