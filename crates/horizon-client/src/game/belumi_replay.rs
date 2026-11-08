@@ -22,6 +22,7 @@ pub(super) enum RAct {
     Play(usize, Option<usize>),
     Delete(usize, Option<usize>),
     Record,
+    Video,
     DeathClip,
     Clip(i32),
     Pause,
@@ -85,6 +86,16 @@ impl ReplayState {
     /// No replay is playing.
     pub(super) fn playing_none(&self) -> bool {
         self.playing.is_none()
+    }
+
+    /// Where the playing replay is, in ms.
+    pub(super) fn position(&self) -> Option<u32> {
+        self.playing.as_ref().map(|p| p.ctl.position.load(Ordering::Relaxed))
+    }
+
+    /// The playing replay (or its clip) reached its end.
+    pub(super) fn finished(&self) -> bool {
+        self.playing.as_ref().is_some_and(|p| p.ctl.finished.load(Ordering::Relaxed))
     }
 }
 
@@ -329,6 +340,7 @@ impl Game<'_> {
             "key.keyboard.p" => self.belumi_replay_point(),
             "key.keyboard.o" => self.belumi_replay_follow(),
             "key.keyboard.k" => self.belumi_replay_chase(),
+            "key.keyboard.f7" => self.belumi_export_toggle(),
             "key.keyboard.backspace" => self.belumi_replay_clear_points(),
             _ => {}
         }
@@ -724,8 +736,27 @@ impl Game<'_> {
         self.native_text(batch, &st, [x + 146.0 + (36.0 - sw) / 2.0, by + 4.0], 0x00FF_FFFF, true);
         self.client_button(batch, [x + 184.0, by, 14.0, 16.0], "+", None, Act::Replay(RAct::Speed(1)));
         self.client_button(batch, [x + 210.0, by, 88.0, 16.0], if free { "Free camera" } else { "Player's view" }, Some(free), Act::Replay(RAct::Cam));
+        let video = self.belumi_export_active();
+        self.client_button(batch, [x + pw - 64.0, y + 3.0, 54.0, 14.0], if video { "Video: ON" } else { "Video" }, Some(video), Act::Replay(RAct::Video));
         self.client_button(batch, [x + pw - 112.0, by, 50.0, 16.0], "Close", None, Act::Close);
         self.client_button(batch, [x + pw - 58.0, by, 48.0, 16.0], "Stop", None, Act::Replay(RAct::Stop));
+    }
+
+    /// `/replay` opens the list; `/replay play N [C]` plays the Nth recording (newest first), or its Cth clip.
+    pub(super) fn belumi_replay_command(&mut self, command: &str, ran: &mut bool) {
+        let mut parts = command.split_whitespace();
+        if *ran || !parts.next().is_some_and(|h| h.eq_ignore_ascii_case("replay")) {
+            return;
+        }
+        *ran = true;
+        self.replay_page_open();
+        match (parts.next(), parts.next().and_then(|n| n.parse::<usize>().ok()), parts.next().and_then(|n| n.parse::<usize>().ok())) {
+            (Some("play"), Some(n), clip) if n >= 1 && n <= self.belumi_replay.entries.len() => {
+                self.replay_do(RAct::Play(n - 1, clip.and_then(|c| c.checked_sub(1))));
+            }
+            (Some("play"), _, _) => self.native_chat("Usage: /replay play N [CLIP]  (see the list with /replay)"),
+            _ => self.client_open_page(Page::Replays),
+        }
     }
 
     pub(super) fn replay_do(&mut self, act: RAct) {
@@ -737,6 +768,7 @@ impl Game<'_> {
                 self.modules_changed();
                 self.toast(if on { "Recording on: the next session is saved" } else { "Recording off" });
             }
+            RAct::Video => self.belumi_export_toggle(),
             RAct::DeathClip => {
                 let r = &mut self.modules().replay;
                 r.auto_death_clip = !r.auto_death_clip;

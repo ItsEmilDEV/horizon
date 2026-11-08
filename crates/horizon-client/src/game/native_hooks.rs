@@ -322,6 +322,7 @@ impl Game<'_> {
         self.belumi_combat_tick();
         self.belumi_sound_frame();
         self.belumi_redstone_frame();
+        self.belumi_export_frame();
         self.belumi_history_switch();
     }
     /// Once a tick, in every `Game`: the window's (in single player, on LAN
@@ -390,6 +391,7 @@ impl Game<'_> {
         self.belumi_chests_command(command, ran);
         self.belumi_combat_command(command, ran);
         self.belumi_history_command(command, ran);
+        self.belumi_replay_command(command, ran);
         self.belumi_voice_command(command, ran);
         self.belumi_map_command(command, ran);
     }
