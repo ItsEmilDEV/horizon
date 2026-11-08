@@ -81,6 +81,13 @@ pub(super) fn chase_pose(killer: [f64; 3], victim: [f64; 3], back: f64) -> ([f64
     (pos, yaw, pitch)
 }
 
+impl ReplayState {
+    /// No replay is playing.
+    pub(super) fn playing_none(&self) -> bool {
+        self.playing.is_none()
+    }
+}
+
 fn clock(ms: u32) -> String {
     let s = ms / 1000;
     if s >= 3600 { format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60) } else { format!("{}:{:02}", s / 60, s % 60) }

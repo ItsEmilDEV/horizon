@@ -35,6 +35,7 @@ pub(super) enum Page {
     Accounts,
     Changes,
     Chests,
+    Combat,
     Plugin,
     Replays,
     Replay,
@@ -73,6 +74,8 @@ pub(super) enum Act {
     Trail,
     ChangesOn,
     ChestsOn,
+    CombatOn,
+    CombatClear,
     ChestMark(usize),
     ChangeMark(usize),
     ChangesClear,
@@ -990,6 +993,14 @@ impl Game<'_> {
             Act::PluginOpen(plugin) => self.belumi_client.plugin_page = Some(plugin),
             Act::PluginPress(plugin, id, value) => self.belumi_plugin_press(&plugin, &id, value),
             Act::PickAccount(i) => self.belumi_switch_account(i),
+            Act::CombatOn => {
+                let m = self.modules();
+                m.misc.combat = !m.misc.combat;
+                self.modules_changed();
+            }
+            Act::CombatClear => {
+                self.combat_act(&act);
+            }
             Act::ChestsOn => {
                 let m = self.modules();
                 m.misc.chest_memory = !m.misc.chest_memory;
@@ -1154,6 +1165,7 @@ impl Game<'_> {
             Page::Plugin => self.draw_plugin_page(batch, w, h),
             Page::Changes => self.draw_changes_page(batch, w, h),
             Page::Chests => self.draw_chests_page(batch, w, h),
+            Page::Combat => self.draw_combat_page(batch, w, h),
             Page::Replays => self.draw_replays_page(batch, w, h),
             Page::Replay => self.draw_replay_controls_page(batch, w, h),
         }
@@ -1312,6 +1324,7 @@ impl Game<'_> {
             ("Crosshair".into(), "Your own shape and colour".into(), Some(m.crosshair.enabled), Act::CrosshairOn, Some(Page::Crosshair)),
             ("Item tooltips".into(), "Item id and durability numbers".into(), Some(m.misc.tooltips), Act::Tooltips, None),
             ("Shulker preview".into(), "Contents in the tooltip".into(), Some(m.misc.container_preview), Act::ContainerPreview, None),
+            ("Combat log".into(), "Swings, hits, damage, CPS".into(), Some(m.misc.combat), Act::CombatOn, Some(Page::Combat)),
             ("Chest memory".into(), "Find items with /chests".into(), Some(m.misc.chest_memory), Act::ChestsOn, Some(Page::Chests)),
             ("Changes".into(), "What changed since your last visit".into(), Some(m.misc.changes), Act::ChangesOn, Some(Page::Changes)),
             ("Breadcrumb trail".into(), "Dots behind you, for the way back".into(), Some(m.misc.trail), Act::Trail, None),

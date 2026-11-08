@@ -722,6 +722,9 @@ impl Game<'_> {
     }
 
     pub(super) fn send(&self, packet: S) {
+        if let S::Attack(a) = &packet {
+            self.belumi_combat.note_swing(a.id);
+        }
         if let Some(r) = &self.remote {
             r.session.send(packet);
         }
@@ -2794,6 +2797,7 @@ impl Game<'_> {
             // This player's own hurt tilt and flash come from the server too
             // (sent to the player itself): its own moves never hurt it.
             C::DamageEvent(p) => {
+                self.belumi_combat_damage(p.id, p.cause.or(p.direct));
                 if self.remote.as_ref().is_some_and(|r| r.entity_id == p.id) {
                     self.belumi_replay_damage(p.cause.or(p.direct));
                     if let Some(pl) = self.player.as_mut() {
@@ -3003,6 +3007,7 @@ impl Game<'_> {
             C::GameRuleValues(p) => self.remote_world_options_rules(p.entries),
             // ClientPacketListener.handleSetHealth: LocalPlayer.hurtTo.
             C::SetHealth(p) => {
+                self.belumi_combat_health(p.health);
                 let flash = self.remote.as_mut().is_some_and(|r| {
                     r.health = (p.health, p.food, p.saturation);
                     std::mem::replace(&mut r.flash_on_set_health, true)

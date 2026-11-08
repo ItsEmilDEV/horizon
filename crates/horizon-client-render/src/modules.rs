@@ -278,6 +278,8 @@ pub struct Misc {
     pub changes: bool,
     /// Remember what the containers you open hold (`/chests TEXT`).
     pub chest_memory: bool,
+    /// Write down every fight: swings, hits, damage taken, clicks per second.
+    pub combat: bool,
     /// What the compass module points at: a waypoint's name, `back` for where the trail began, empty for the nearest.
     pub compass_target: String,
     pub low_durability_warning: bool,
@@ -294,6 +296,7 @@ impl Default for Misc {
             trail: false,
             changes: true,
             chest_memory: true,
+            combat: true,
             compass_target: String::new(),
             low_durability_warning: true,
         }
