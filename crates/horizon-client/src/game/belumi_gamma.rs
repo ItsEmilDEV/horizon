@@ -19,6 +19,7 @@ pub(super) fn next_level(level: u8) -> u8 {
 impl Game<'_> {
     /// Once a frame: the renderer gets the slider's gamma plus the boost, and fullbright as set.
     pub(super) fn belumi_gamma_frame(&mut self) {
+        horizon_client::motion::set_riptide_fix(self.modules_ref().is_some_and(|m| m.misc.riptide_fix));
         let level = self.modules_ref().map_or(0, |m| m.misc.gamma_level);
         let want = self.settings.gamma + boost(level);
         let bright = self.settings.extras.fullbright;

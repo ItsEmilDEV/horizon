@@ -50,6 +50,19 @@ pub use fluids::{
     bubble_column_push,
 };
 
+/// Vanilla's bug MC-136249: Depth Strider adds drag to a Riptide launch (the launch is one push, so every tick of extra drag is
+/// lost distance). With this on, Depth Strider does nothing while the player is spinning with a riptide trident.
+static RIPTIDE_FIX: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_riptide_fix(on: bool) {
+    RIPTIDE_FIX.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The water movement efficiency (Depth Strider) to use: none while spinning when the fix is on.
+pub(crate) fn effective_water_efficiency(spinning: bool, fix: bool, attribute: f64) -> f64 {
+    if spinning && fix { 0.0 } else { attribute }
+}
+
 pub struct MotionResources {
     pub attributes: Arc<Catalog>,
     pub blocks: BoundMovementProperties,
@@ -2597,6 +2610,26 @@ impl LivingMotionWorld for MotionWorld<'_, '_, '_> {
     }
     fn air_drag_modifier(&mut self) -> Result<f64> {
         self.player.attribute("minecraft:air_drag_modifier")
+    }
+}
+
+#[cfg(test)]
+mod riptide_fix_tests {
+    use super::*;
+
+    #[test]
+    fn depth_strider_stops_counting_only_while_spinning_and_only_with_the_fix_on() {
+        assert_eq!(effective_water_efficiency(true, true, 1.0), 0.0);
+        assert_eq!(effective_water_efficiency(true, false, 1.0), 1.0, "off: vanilla");
+        assert_eq!(effective_water_efficiency(false, true, 1.0), 1.0, "swimming normally keeps Depth Strider");
+    }
+
+    #[test]
+    fn the_drag_it_removes_is_the_difference_between_water_slowdown_and_the_depth_strider_value() {
+        // Horizontal speed left after ten ticks in water, from the slowdown the travel code ends with.
+        let slowdown = |efficiency: f32| 0.8f32 + (0.54600006 - 0.8) * efficiency;
+        let left = |e: f32| slowdown(e).powi(10);
+        assert!(left(0.0) > 40.0 * left(1.0), "{} against {}", left(0.0), left(1.0));
     }
 }
 

@@ -201,7 +201,9 @@ impl LivingFluidWorld for MotionWorld<'_, '_, '_> {
         Ok(0.8)
     }
     fn water_movement_efficiency(&mut self) -> Result<f64> {
-        self.player.attribute("minecraft:water_movement_efficiency")
+        let attribute = self.player.attribute("minecraft:water_movement_efficiency")?;
+        let fix = super::RIPTIDE_FIX.load(std::sync::atomic::Ordering::Relaxed);
+        Ok(super::effective_water_efficiency(self.player.auto_spin_attack_ticks > 0, fix, attribute))
     }
     fn dolphins_grace(&mut self) -> Result<bool> {
         Ok(self.player.status.dolphins_grace)

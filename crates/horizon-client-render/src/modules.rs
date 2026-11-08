@@ -297,6 +297,8 @@ pub struct Misc {
     pub light_overlay: bool,
     /// Brightness added to the options slider, 0 to 15 steps; a key cycles it, another switches fullbright.
     pub gamma_level: u8,
+    /// Depth Strider no longer slows a Riptide launch (the bug MC-136249 of the vanilla game).
+    pub riptide_fix: bool,
     /// Single sound events turned down or muted, in percent (the Sound controller page).
     pub sound_levels: std::collections::BTreeMap<String, u8>,
     pub gamma_key: String,
@@ -328,6 +330,7 @@ impl Default for Misc {
             accurate_placement: false,
             light_overlay: false,
             gamma_level: 0,
+            riptide_fix: false,
             sound_levels: Default::default(),
             gamma_key: String::new(),
             fullbright_key: String::new(),
