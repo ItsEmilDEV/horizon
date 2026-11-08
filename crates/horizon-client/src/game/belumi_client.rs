@@ -88,6 +88,7 @@ pub(super) enum Act {
     GammaCycle,
     RiptideFix,
     ConfirmCycle,
+    PatFlag(&'static str),
     SoundLevel(String, u8),
     SoundsReset,
     AccurateBreak,
@@ -1069,6 +1070,17 @@ impl Game<'_> {
                 self.modules_changed();
                 self.belumi_confirm(if on { "Riptide fix ON: a server that checks speed may notice" } else { "Riptide fix OFF" });
             }
+            Act::PatFlag(flag) => {
+                let m = self.modules();
+                match flag {
+                    "pat" => m.misc.pat = !m.misc.pat,
+                    "hearts" => m.misc.pat_hearts = !m.misc.pat_hearts,
+                    "sound" => m.misc.pat_sound = !m.misc.pat_sound,
+                    "any_hand" => m.misc.pat_any_hand = !m.misc.pat_any_hand,
+                    _ => m.misc.pat_players = !m.misc.pat_players,
+                }
+                self.modules_changed();
+            }
             Act::ConfirmCycle => {
                 let m = self.modules();
                 m.misc.confirm = match m.misc.confirm.as_str() {
@@ -1447,6 +1459,7 @@ impl Game<'_> {
             ("World history".into(), "Older chunk versions, /rollback".into(), Some(m.misc.world_history), Act::HistoryOn, None),
             ("Sound physics".into(), "Reverb of the room you are in".into(), Some(m.misc.sound_physics), Act::SoundOn, None),
             ("Sound controller".into(), "Turn single sounds down".into(), None, Act::Page(Page::Sounds), Some(Page::Sounds)),
+            ("Pat creatures".into(), "Shift + right click".into(), Some(m.misc.pat), Act::PatFlag("pat"), None),
             ("Switch notices".into(), format!("Say what a switch did: {}", m.misc.confirm), Some(m.misc.confirm != "off"), Act::ConfirmCycle, None),
             ("Riptide fix".into(), "Depth Strider keeps Riptide fast".into(), Some(m.misc.riptide_fix), Act::RiptideFix, None),
             ("Gamma boost".into(), format!("Brightness beyond the slider: {} of 15", m.misc.gamma_level), Some(m.misc.gamma_level > 0), Act::GammaCycle, None),

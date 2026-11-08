@@ -55,6 +55,7 @@ mod belumi_client;
 mod belumi_replay;
 mod belumi_freecam;
 mod belumi_accounts;
+mod belumi_pat;
 mod belumi_sounds;
 mod belumi_gamma;
 mod belumi_inspect;
@@ -2147,6 +2148,7 @@ struct Game<'a> {
     belumi_export: belumi_export::Export,
     belumi_ping: belumi_ping::Pings,
     belumi_plans: belumi_blueprint::Plans,
+    belumi_pats: belumi_pat::Pats,
     belumi_light: belumi_light::LightOverlay,
     belumi_sound_levels: std::collections::BTreeMap<String, u8>,
     belumi_free: belumi_freecam::FreecamState,
@@ -15270,6 +15272,7 @@ impl<'a> Game<'a> {
             belumi_export: Default::default(),
             belumi_ping: Default::default(),
             belumi_plans: Default::default(),
+            belumi_pats: Default::default(),
             belumi_light: Default::default(),
             belumi_sound_levels: Default::default(),
             belumi_free: Default::default(),

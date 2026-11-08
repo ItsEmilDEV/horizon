@@ -271,6 +271,10 @@ impl Game<'_> {
     /// swung and spent (or, with infinite materials, kept) the item, or that
     /// started using it.
     pub(super) fn use_with_hand(&mut self) -> Result<()> {
+        // Shift + use on a creature is a pat (belumi_pat.rs): nothing is used, so a pet does not sit or stand up.
+        if self.belumi_pat_blocks_use() {
+            return Ok(());
+        }
         if self.clicks.destroying.active || self.hands_busy() {
             return Ok(());
         }

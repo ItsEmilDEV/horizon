@@ -301,6 +301,14 @@ pub struct Misc {
     pub riptide_fix: bool,
     /// How far the Inspect module looks, in blocks (the game's own reach is for hitting and placing).
     pub inspect_range: u8,
+    /// Pat: Shift + the right button pets a creature (a clone of the mod PatPat).
+    pub pat: bool,
+    pub pat_hearts: bool,
+    pub pat_sound: bool,
+    /// Pat with an item in the hand too (else only with an empty hand).
+    pub pat_any_hand: bool,
+    /// Pat other players too.
+    pub pat_players: bool,
     /// Where a switch says what it did: `hud` (a notice on the screen), `chat` or `off` (the mod's "Confirmation Type").
     pub confirm: String,
     /// Single sound events turned down or muted, in percent (the Sound controller page).
@@ -336,6 +344,11 @@ impl Default for Misc {
             gamma_level: 0,
             riptide_fix: false,
             inspect_range: 20,
+            pat: true,
+            pat_hearts: true,
+            pat_sound: true,
+            pat_any_hand: false,
+            pat_players: true,
             confirm: "hud".into(),
             sound_levels: Default::default(),
             gamma_key: String::new(),

@@ -18,6 +18,8 @@ const KINDS: [(&str, u32); 3] = [("Look here", 0x0055_FF55), ("Danger", 0x00FF_5
 pub(super) enum Msg {
     Ping { kind: usize, pos: [f64; 3] },
     Waypoint { name: String, pos: [i32; 3], dimension: String },
+    /// A player began (`on`) or stopped patting the creature with this entity id.
+    Pat { entity: u32, on: bool },
 }
 
 #[derive(Clone, Debug)]
@@ -41,6 +43,7 @@ pub(super) fn encode(msg: &Msg) -> Vec<u8> {
     match msg {
         Msg::Ping { kind, pos } => serde_json::json!({"k": "ping", "t": kind, "x": pos[0], "y": pos[1], "z": pos[2]}),
         Msg::Waypoint { name, pos, dimension } => serde_json::json!({"k": "wp", "n": name, "x": pos[0], "y": pos[1], "z": pos[2], "d": dimension}),
+        Msg::Pat { entity, on } => serde_json::json!({"k": "pat", "e": entity, "on": on}),
     }
     .to_string()
     .into_bytes()
@@ -71,6 +74,7 @@ pub(super) fn decode(data: &[u8]) -> Option<(String, Msg)> {
             pos: [num("x")?.round() as i32, num("y")?.round() as i32, num("z")?.round() as i32],
             dimension: clean_name(v.get("d")?.as_str()?, 40)?,
         },
+        "pat" => Msg::Pat { entity: u32::try_from(v.get("e")?.as_u64()?).ok()?, on: v.get("on")?.as_bool()? },
         _ => return None,
     };
     Some((from, msg))
@@ -100,6 +104,15 @@ impl Game<'_> {
         self.belumi_ping.last_sent = Some(Instant::now());
         self.send(S::CustomPayload(horizon_protocol::packets::configuration::CustomPayload { channel: CHANNEL.into(), data: encode(msg) }));
         true
+    }
+
+    /// Tells the other players you began or stopped patting a creature (a pat is sent twice at most per start and stop).
+    pub(super) fn belumi_ping_send_pat(&mut self, entity: u32, on: bool) {
+        if !self.pings_on() {
+            return;
+        }
+        // Unlike a ping, a pat message must not be dropped by the half-second spacing: start and stop both go.
+        self.send(S::CustomPayload(horizon_protocol::packets::configuration::CustomPayload { channel: CHANNEL.into(), data: encode(&Msg::Pat { entity, on }) }));
     }
 
     /// The ping key: Z marks "look here", Shift+Z "danger", Ctrl+Z "come here", at the block in the crosshair.
@@ -146,6 +159,7 @@ impl Game<'_> {
                 self.belumi_ping_add(from, kind, pos);
                 self.audio.play_ping();
             }
+            Msg::Pat { entity, on } => self.belumi_pat_remote(entity, on),
             Msg::Waypoint { ref name, pos, .. } => {
                 self.native_chat(&format!("{from} shared the waypoint {name} ({} {} {}). Type /acceptwp to keep it.", pos[0], pos[1], pos[2]));
                 self.belumi_ping.offered = Some((from, msg, Instant::now()));
@@ -249,6 +263,16 @@ mod tests {
     fn a_waypoint_goes_through_too() {
         let msg = Msg::Waypoint { name: "Base".into(), pos: [100, 64, -20], dimension: "minecraft:overworld".into() };
         assert_eq!(decode(&relay("Steve", &encode(&msg)).unwrap()), Some(("Steve".to_owned(), msg)));
+    }
+
+    #[test]
+    fn a_pat_goes_through_the_relay_and_reads_back() {
+        for on in [true, false] {
+            let handed = relay("Alex", &encode(&Msg::Pat { entity: 4711, on })).unwrap();
+            assert_eq!(decode(&handed), Some(("Alex".to_owned(), Msg::Pat { entity: 4711, on })));
+        }
+        assert_eq!(relay("Alex", br#"{"k":"pat","e":-1,"on":true}"#), None, "no negative entity");
+        assert_eq!(relay("Alex", br#"{"k":"pat","e":5}"#), None, "on or off has to be said");
     }
 
     #[test]

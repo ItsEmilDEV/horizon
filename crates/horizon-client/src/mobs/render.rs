@@ -1031,7 +1031,7 @@ pub fn base_transform_at(m: &Mob, alpha: f32, origin: glam::Mat4) -> glam::Mat4 
     }
     base *= species_rotations(m, alpha);
     base *= glam::Mat4::from_scale(glam::Vec3::new(-1.0, -1.0, 1.0));
-    base *= species_scale(m, alpha);
+    base *= species_scale(m, alpha) * pat_scale(m);
     base * glam::Mat4::from_translation(glam::Vec3::new(0.0, -1.501, 0.0))
 }
 /// `LivingEntityRenderer.isShaking`: a fully frozen mob (the skeleton's own
@@ -1093,6 +1093,20 @@ fn body_overlay(m: &Mob, alpha: f32) -> u32 {
 /// tearing down).
 fn red_overlay(m: &Mob) -> bool {
     m.hurt_time > 0 || (m.death_time > 0 && !super::creaking::tearing_down(m))
+}
+/// The squash of a creature that is being patted (feet stay on the ground: the model's origin is at them).
+fn pat_scale(m: &Mob) -> glam::Mat4 {
+    if m.extra.pat <= 0.0 {
+        return glam::Mat4::IDENTITY;
+    }
+    let [x, y, z] = pat_squash(m.extra.pat, m.kind.height as f32, m.is_baby());
+    glam::Mat4::from_scale(glam::Vec3::new(x, y, z))
+}
+/// `game::belumi_pat::squash_scale`, kept here so the renderer needs nothing from the game.
+pub fn pat_squash(amplitude: f32, height: f32, baby: bool) -> [f32; 3] {
+    let size = (1.0 / (0.6 + height.max(0.2))).clamp(0.45, 1.3) * if baby { 1.25 } else { 1.0 };
+    let (down, out) = (0.14 * size * amplitude, 0.07 * size * amplitude);
+    [1.0 + out, 1.0 - down, 1.0 + out]
 }
 fn species_scale(m: &Mob, alpha: f32) -> glam::Mat4 {
     if avatar(m) {

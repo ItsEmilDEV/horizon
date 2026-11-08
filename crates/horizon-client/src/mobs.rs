@@ -764,6 +764,8 @@ pub fn anger_left(anger_end: i64, game_time: i64) -> i32 {
 /// Species-specific persistent state (variants, colours, taming, ageing...).
 #[derive(Clone, Debug, Default)]
 pub struct Extra {
+    /// How much a creature is squashed by being patted (0 to 1; Belumi's pat, `game/belumi_pat.rs`).
+    pub pat: f32,
     /// A player's or mannequin's `minecraft:scale`, which scales the whole model
     /// (`LivingEntityRenderState.scale`): the local player's own, and on a
     /// server the others' from their attribute updates; 0 is the default, 1.

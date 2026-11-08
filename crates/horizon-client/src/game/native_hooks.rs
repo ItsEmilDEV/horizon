@@ -325,6 +325,7 @@ impl Game<'_> {
         self.belumi_export_frame();
         self.belumi_blueprint_frame();
         self.belumi_light_frame();
+        self.belumi_pat_frame();
         self.belumi_gamma_frame();
         self.belumi_sounds_frame();
         self.belumi_history_switch();
