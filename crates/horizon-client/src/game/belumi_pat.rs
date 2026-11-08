@@ -112,6 +112,8 @@ struct Pat {
     /// When the last stroke began (the arm swings and the sound plays with each stroke).
     stroke: Instant,
     strokes: u32,
+    /// The player who pats it, when another player does (the one whose arm swings with each stroke).
+    by: Option<u32>,
 }
 
 impl Pat {
@@ -124,6 +126,7 @@ impl Pat {
             hearts: prev.map_or(past, |p| p.hearts),
             stroke: prev.map_or(past, |p| p.stroke),
             strokes: prev.map_or(0, |p| p.strokes),
+            by: None,
         }
     }
     fn seconds(&self, now: Instant) -> (f32, Option<f32>) {
@@ -263,7 +266,7 @@ impl Game<'_> {
             let stroke = since >= STROKE_MIN && (fresh || since.as_secs_f32() >= style.period);
             let spawn_hearts = hearts_on && (now.duration_since(p.hearts) >= hearts_every || (stroke && now.duration_since(p.hearts) >= STROKE_MIN * 2));
             let (swing, sound) = (mine && stroke, sound_on && stroke);
-            let nth = p.strokes;
+            let (nth, by) = (p.strokes, if stroke { p.by } else { None });
             if spawn_hearts {
                 p.hearts = now;
             }
@@ -283,6 +286,12 @@ impl Game<'_> {
             }
             if swing {
                 self.swing_arm();
+            }
+            // The arm of another player who pats swings with each stroke, as the mod PatPat shows it.
+            if let Some(by) = by
+                && let Some(pm) = self.mobs.iter_mut().find(|m| m.id == by)
+            {
+                pm.swing_hand_modified(false, horizon_client::first_person::SwingAnimation::DEFAULT);
             }
             if sound {
                 // Every stroke is a soft rub with a little changing pitch; now and then the creature answers in its own voice.
@@ -371,11 +380,16 @@ impl Game<'_> {
     }
 
     /// Another player began or stopped patting a creature (from the server).
-    pub(super) fn belumi_pat_remote(&mut self, id: u32, on: bool) {
+    pub(super) fn belumi_pat_remote(&mut self, from: &str, id: u32, on: bool) {
         let now = Instant::now();
         if on {
-            if !self.belumi_pats.active.get(&id).is_some_and(|p| p.ended.is_none()) {
-                let fresh = Pat::new(now, self.belumi_pats.active.get(&id));
+            let remote = self.remote.as_ref();
+            let by = self.mobs.iter().find(|m| m.kind.id == "minecraft:player" && remote.and_then(|r| r.player_name(m.id)).as_deref() == Some(from)).map(|m| m.id);
+            if let Some(p) = self.belumi_pats.active.get_mut(&id).filter(|p| p.ended.is_none()) {
+                p.by = by.or(p.by);
+            } else {
+                let mut fresh = Pat::new(now, self.belumi_pats.active.get(&id));
+                fresh.by = by;
                 self.belumi_pats.active.insert(id, fresh);
             }
         } else if let Some(p) = self.belumi_pats.active.get_mut(&id)

@@ -159,7 +159,7 @@ impl Game<'_> {
                 self.belumi_ping_add(from, kind, pos);
                 self.audio.play_ping();
             }
-            Msg::Pat { entity, on } => self.belumi_pat_remote(entity, on),
+            Msg::Pat { entity, on } => self.belumi_pat_remote(&from, entity, on),
             Msg::Waypoint { ref name, pos, .. } => {
                 self.native_chat(&format!("{from} shared the waypoint {name} ({} {} {}). Type /acceptwp to keep it.", pos[0], pos[1], pos[2]));
                 self.belumi_ping.offered = Some((from, msg, Instant::now()));
