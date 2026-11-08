@@ -54,6 +54,7 @@ mod belumi_diagnose;
 mod belumi_client;
 mod belumi_replay;
 mod belumi_freecam;
+mod belumi_accounts;
 mod belumi_distant;
 mod belumi_maps;
 mod map_entities;
@@ -14771,6 +14772,15 @@ impl ApplicationHandler for Game<'_> {
         }
     }
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if self.belumi_client.switch_quit && self.pending_save.as_ref().is_none_or(|save| !save.quit) {
+            // An account switch: close like a window close, saving the world first; the launcher starts the game again.
+            self.belumi_client.switch_quit = false;
+            if let Err(error) = self.begin_closing_save(true) {
+                self.error = Some(error);
+                event_loop.exit();
+                return;
+            }
+        }
         if horizon_threads::stop_requests() > 0
             && self.pending_save.as_ref().is_none_or(|save| !save.quit)
         {

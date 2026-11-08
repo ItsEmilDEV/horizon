@@ -32,6 +32,7 @@ pub(super) enum Page {
     Crosshair,
     Chat,
     Discord,
+    Accounts,
     Replays,
     Replay,
 }
@@ -66,6 +67,7 @@ pub(super) enum Act {
     Tooltips,
     ContainerPreview,
     DistantChunks,
+    PickAccount(usize),
     Reconnect,
     Warning,
     Extra(&'static str),
@@ -74,6 +76,9 @@ pub(super) enum Act {
 
 #[derive(Default)]
 pub(super) struct ClientState {
+    pub(super) saved: Option<super::belumi_accounts::Saved>,
+    /// The game ends at the next chance: an account switch was asked for.
+    pub(super) switch_quit: bool,
     modules: Option<Modules>,
     page: Page,
     selected: Option<String>,
@@ -832,6 +837,7 @@ impl Game<'_> {
             Act::Page(page) => {
                 self.chat_boxes_commit();
                 self.belumi_client.page = page;
+                self.belumi_client.saved = None;
                 if page == Page::Replays {
                     self.replay_page_open();
                 }
@@ -933,6 +939,7 @@ impl Game<'_> {
                 m.misc.tooltips = !m.misc.tooltips;
                 self.modules_changed();
             }
+            Act::PickAccount(i) => self.belumi_switch_account(i),
             Act::DistantChunks => {
                 let m = self.modules();
                 m.misc.distant_chunks = !m.misc.distant_chunks;
@@ -1072,6 +1079,7 @@ impl Game<'_> {
             Page::Crosshair => self.draw_crosshair_page(batch, w, h),
             Page::Chat => self.draw_chat_page(batch, w, h),
             Page::Discord => self.draw_discord_page(batch, w, h),
+            Page::Accounts => self.draw_accounts_page(batch, w, h),
             Page::Replays => self.draw_replays_page(batch, w, h),
             Page::Replay => self.draw_replay_controls_page(batch, w, h),
         }
@@ -1233,6 +1241,7 @@ impl Game<'_> {
             ("Distant chunks".into(), "Keep far chunks, cache them".into(), Some(m.misc.distant_chunks), Act::DistantChunks, None),
             ("Break warning".into(), "Flash when gear is low".into(), Some(m.misc.low_durability_warning), Act::Warning, None),
             ("Discord presence".into(), "What your profile shows".into(), Some(self.settings.extras.discord_presence), Act::Extra("discord"), Some(Page::Discord)),
+            ("Switch account".into(), "Another launcher account".into(), None, Act::Page(Page::Accounts), Some(Page::Accounts)),
             ("Chat tools".into(), "Time, filter, sound".into(), None, Act::Page(Page::Chat), Some(Page::Chat)),
             ("Replays and clips".into(), "Record, clip, watch again".into(), Some(m.replay.record), Act::Replay(super::belumi_replay::RAct::Record), Some(Page::Replays)),
             ("Auto-reconnect".into(), "Rejoin a lost server".into(), Some(self.settings.extras.auto_reconnect), Act::Reconnect, None),
