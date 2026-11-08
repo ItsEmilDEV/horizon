@@ -320,6 +320,7 @@ impl Game<'_> {
         self.belumi_changes_tick();
         self.belumi_chests_tick();
         self.belumi_combat_tick();
+        self.belumi_sound_frame();
     }
     /// Once a tick, in every `Game`: the window's (in single player, on LAN
     /// and on servers), and the server's own (`native_window` is false

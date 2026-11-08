@@ -40,8 +40,74 @@ struct Channel {
     at: [f32; 3],
     relative: bool,
 }
+/// A comb filter of the reverb: a delay line fed back on itself, its high frequencies damped.
+struct Comb {
+    buf: Vec<f32>,
+    at: usize,
+    store: f32,
+}
+impl Comb {
+    fn new(len: usize) -> Self {
+        Self { buf: vec![0.0; len.max(1)], at: 0, store: 0.0 }
+    }
+    fn process(&mut self, x: f32, feedback: f32, damp: f32) -> f32 {
+        let out = self.buf[self.at];
+        self.store = out * (1.0 - damp) + self.store * damp;
+        self.buf[self.at] = x + self.store * feedback;
+        self.at = (self.at + 1) % self.buf.len();
+        out
+    }
+}
+/// An all-pass filter of the reverb: it smears the echoes without colouring the sound.
+struct AllPass {
+    buf: Vec<f32>,
+    at: usize,
+}
+impl AllPass {
+    fn new(len: usize) -> Self {
+        Self { buf: vec![0.0; len.max(1)], at: 0 }
+    }
+    fn process(&mut self, x: f32) -> f32 {
+        let delayed = self.buf[self.at];
+        let out = delayed - x;
+        self.buf[self.at] = x + delayed * 0.5;
+        self.at = (self.at + 1) % self.buf.len();
+        out
+    }
+}
+/// A small Schroeder reverb (four combs, two all-passes) for the sound of a room: the world's sounds are sent through it
+/// in the amount the room's size asks for.
+pub struct Reverb {
+    combs: [Comb; 4],
+    all: [AllPass; 2],
+}
+impl Reverb {
+    pub fn new(rate: u32) -> Self {
+        let scale = |n: usize| (n as f64 * f64::from(rate) / 44_100.0) as usize;
+        Self {
+            combs: [Comb::new(scale(1116)), Comb::new(scale(1188)), Comb::new(scale(1277)), Comb::new(scale(1356))],
+            all: [AllPass::new(scale(556)), AllPass::new(scale(441))],
+        }
+    }
+    /// One sample in, the reverberation out. `decay` 0..1 is how long the room rings.
+    pub fn process(&mut self, x: f32, decay: f32) -> f32 {
+        let feedback = 0.70 + 0.26 * decay.clamp(0.0, 1.0);
+        let mut sum = 0.0;
+        for c in &mut self.combs {
+            sum += c.process(x * 0.15, feedback, 0.25);
+        }
+        for a in &mut self.all {
+            sum = a.process(sum);
+        }
+        sum
+    }
+}
 #[derive(Default)]
 struct Mixer {
+    /// How much of the world's sound goes through the reverb (0: none) and how long the room rings.
+    room_wet: f32,
+    room_decay: f32,
+    reverb: Option<Reverb>,
     channels: HashMap<ChannelId, Channel>,
     listener: [f64; 3],
     listener_yaw: f32,
@@ -433,14 +499,19 @@ fn mix(mixer: &mut Mixer, data: &mut [f32], channels: usize, rate: u32) {
         let step = f64::from(*source_rate) / f64::from(rate) * f64::from(c.pitch.max(0.0));
         voices.push((*id, [left, right, gain], step));
     }
+    // The world's sounds (not music, not the interface) also go to the reverb, as much as the room asks for.
+    let frames = data.len() / channels.max(1);
+    let wet_on = mixer.room_wet > 0.001;
+    let mut send = if wet_on { vec![0.0f32; frames] } else { Vec::new() };
     for (id, [left, right, gain], step) in voices {
         let Some(c) = mixer.channels.get_mut(&id) else {
             continue;
         };
+        let positional = !c.relative;
         let Some((samples, _)) = c.samples.clone() else {
             continue;
         };
-        for frame in data.chunks_mut(channels) {
+        for (n, frame) in data.chunks_mut(channels).enumerate() {
             let mut i = c.position as usize;
             if i + 1 >= samples.len() {
                 if c.looping && samples.len() > 1 {
@@ -453,6 +524,9 @@ fn mix(mixer: &mut Mixer, data: &mut [f32], channels: usize, rate: u32) {
             }
             let t = (c.position - i as f64) as f32;
             let s = samples[i] * (1.0 - t) + samples[i + 1] * t;
+            if wet_on && positional {
+                send[n] += s * gain;
+            }
             if channels >= 2 {
                 frame[0] += s * left;
                 frame[1] += s * right;
@@ -461,6 +535,16 @@ fn mix(mixer: &mut Mixer, data: &mut [f32], channels: usize, rate: u32) {
                 frame[0] += s * gain;
             }
             c.position += step;
+        }
+    }
+    if wet_on {
+        let (wet, decay) = (mixer.room_wet.clamp(0.0, 1.0), mixer.room_decay);
+        let reverb = mixer.reverb.get_or_insert_with(|| Reverb::new(rate));
+        for (n, frame) in data.chunks_mut(channels).enumerate() {
+            let r = reverb.process(send[n], decay) * wet;
+            for s in frame.iter_mut() {
+                *s += r;
+            }
         }
     }
     // Limit the whole buffer together, preserving waveform and stereo balance
@@ -746,6 +830,14 @@ impl Audio {
             m.listener = position;
             m.listener_yaw = yaw;
             m.listener_pitch = pitch;
+        }
+    }
+    /// The room the player is in: how much of the world's sound goes through the reverb (0..1, 0 is none) and how long the
+    /// room rings (0..1).
+    pub fn set_room(&mut self, wet: f32, decay: f32) {
+        if let Ok(mut m) = self.backend.mixer.lock() {
+            m.room_wet = wet.clamp(0.0, 1.0);
+            m.room_decay = decay.clamp(0.0, 1.0);
         }
     }
     /// Sync the volume options, refreshing the categories that changed
@@ -1065,6 +1157,41 @@ mod tests {
             output_disabled(env(&[("HORIZON_NO_AUDIO", "1"), ("HORIZON_AUDIO", "1")])).is_some()
         );
     }
+    #[test]
+    fn the_reverb_rings_after_a_click_and_dies_away() {
+        let mut r = Reverb::new(44_100);
+        let mut out: Vec<f32> = (0..44_100).map(|i| r.process(if i == 0 { 1.0 } else { 0.0 }, 0.5)).collect();
+        assert!(out[..1000].iter().all(|v| v.abs() < 1e-6), "the first echo comes after the shortest delay");
+        let energy = |s: &[f32]| s.iter().map(|v| v * v).sum::<f32>();
+        assert!(energy(&out[1000..12_000]) > 1e-4, "a tail follows the click");
+        assert!(energy(&out[30_000..44_100]) < energy(&out[1000..12_000]), "and it fades");
+        // A longer decay rings longer.
+        let mut long = Reverb::new(44_100);
+        let tail: Vec<f32> = (0..44_100).map(|i| long.process(if i == 0 { 1.0 } else { 0.0 }, 1.0)).collect();
+        assert!(energy(&tail[30_000..]) > energy(&out[30_000..]));
+        out.clear();
+    }
+
+    #[test]
+    fn a_dry_room_leaves_the_mix_alone_and_a_wet_room_adds_a_tail() {
+        let sound = Arc::new(vec![1.0f32; 2000]);
+        let play = |wet: f32| {
+            let mut m = Mixer { room_wet: wet, room_decay: 0.5, ..Mixer::default() };
+            m.channels.insert(
+                1,
+                Channel { samples: Some((sound.clone(), 44_100)), position: 0.0, state: State::Playing, gain: 1.0, pitch: 1.0, linear: None, looping: false, at: [0.0, 0.0, 1.0], relative: false },
+            );
+            let mut out = vec![0.0f32; 2 * 8000];
+            mix(&mut m, &mut out, 2, 44_100);
+            out
+        };
+        let (dry, wet) = (play(0.0), play(1.0));
+        // After the sound ended (2000 frames) the dry mix is silent and the wet one still rings.
+        let tail = |v: &[f32]| v[2 * 4000..].iter().map(|s| s * s).sum::<f32>();
+        assert!(tail(&dry) < 1e-9);
+        assert!(tail(&wet) > 1e-6);
+    }
+
     #[test]
     fn linear_attenuation_reaches_zero_at_the_max_distance() {
         assert_eq!(distance_gain(None, 100.0), 1.0);

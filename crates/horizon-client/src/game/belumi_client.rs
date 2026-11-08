@@ -76,6 +76,7 @@ pub(super) enum Act {
     ChestsOn,
     CopyJoin,
     CombatOn,
+    SoundOn,
     CombatClear,
     ChestMark(usize),
     ChangeMark(usize),
@@ -1012,6 +1013,11 @@ impl Game<'_> {
             Act::PluginOpen(plugin) => self.belumi_client.plugin_page = Some(plugin),
             Act::PluginPress(plugin, id, value) => self.belumi_plugin_press(&plugin, &id, value),
             Act::PickAccount(i) => self.belumi_switch_account(i),
+            Act::SoundOn => {
+                let m = self.modules();
+                m.misc.sound_physics = !m.misc.sound_physics;
+                self.modules_changed();
+            }
             Act::CombatOn => {
                 let m = self.modules();
                 m.misc.combat = !m.misc.combat;
@@ -1344,6 +1350,7 @@ impl Game<'_> {
             ("Crosshair".into(), "Your own shape and colour".into(), Some(m.crosshair.enabled), Act::CrosshairOn, Some(Page::Crosshair)),
             ("Item tooltips".into(), "Item id and durability numbers".into(), Some(m.misc.tooltips), Act::Tooltips, None),
             ("Shulker preview".into(), "Contents in the tooltip".into(), Some(m.misc.container_preview), Act::ContainerPreview, None),
+            ("Sound physics".into(), "Reverb of the room you are in".into(), Some(m.misc.sound_physics), Act::SoundOn, None),
             ("Combat log".into(), "Swings, hits, damage, CPS".into(), Some(m.misc.combat), Act::CombatOn, Some(Page::Combat)),
             ("Chest memory".into(), "Find items with /chests".into(), Some(m.misc.chest_memory), Act::ChestsOn, Some(Page::Chests)),
             ("Changes".into(), "What changed since your last visit".into(), Some(m.misc.changes), Act::ChangesOn, Some(Page::Changes)),

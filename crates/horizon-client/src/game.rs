@@ -55,6 +55,7 @@ mod belumi_client;
 mod belumi_replay;
 mod belumi_freecam;
 mod belumi_accounts;
+mod belumi_sound;
 mod belumi_combat;
 mod belumi_photo;
 mod belumi_changes;
@@ -2131,6 +2132,7 @@ struct Game<'a> {
     belumi_chests: belumi_chests::Chests,
     belumi_photo: belumi_photo::Photo,
     belumi_combat: belumi_combat::Combat,
+    belumi_sound: belumi_sound::Sound,
     belumi_free: belumi_freecam::FreecamState,
     belumi_client: belumi_client::ClientState,
     belumi_replay: belumi_replay::ReplayState,
@@ -15245,6 +15247,7 @@ impl<'a> Game<'a> {
             belumi_chests: Default::default(),
             belumi_photo: Default::default(),
             belumi_combat: Default::default(),
+            belumi_sound: Default::default(),
             belumi_free: Default::default(),
             belumi_client: Default::default(),
             belumi_replay: Default::default(),

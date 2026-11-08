@@ -280,6 +280,8 @@ pub struct Misc {
     pub chest_memory: bool,
     /// Write down every fight: swings, hits, damage taken, clicks per second.
     pub combat: bool,
+    /// The world's sounds ring with the room you are in (reverb from the size of the room).
+    pub sound_physics: bool,
     /// What the compass module points at: a waypoint's name, `back` for where the trail began, empty for the nearest.
     pub compass_target: String,
     pub low_durability_warning: bool,
@@ -297,6 +299,7 @@ impl Default for Misc {
             changes: true,
             chest_memory: true,
             combat: true,
+            sound_physics: false,
             compass_target: String::new(),
             low_durability_warning: true,
         }
