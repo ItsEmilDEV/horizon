@@ -168,7 +168,7 @@ impl Game<'_> {
             return None;
         }
         let m = self.mobs.get(i)?;
-        (m.alive() && Some(m.id) != self.riding && (players || m.kind.id != "minecraft:player")).then_some(m.id)
+        (m.alive() && m.hurt_time == 0 && Some(m.id) != self.riding && (players || m.kind.id != "minecraft:player")).then_some(m.id)
     }
 
     /// Whether a use of the hand should do nothing because it is a pat.
