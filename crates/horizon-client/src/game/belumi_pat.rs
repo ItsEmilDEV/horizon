@@ -10,7 +10,7 @@ use std::{collections::HashMap, time::{Duration, Instant}};
 /// How far you can reach a creature to pat it (as for hitting it).
 const REACH: f64 = 3.0;
 /// One squash and stretch.
-pub(super) const PERIOD: f32 = 0.5;
+pub(super) const PERIOD: f32 = 0.32;
 /// What a pat looks like for one kind of creature. Every field is optional in `belumi-patpat.json`: what a kind does not say
 /// it takes from `default`, and that from these values.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
@@ -40,7 +40,7 @@ pub(super) struct Resolved {
 
 impl Default for Resolved {
     fn default() -> Self {
-        Self { strength: 1.0, period: PERIOD, hearts: 2.5, sound: "auto".into(), volume: 0.5 }
+        Self { strength: 1.0, period: PERIOD, hearts: 2.5, sound: "auto".into(), volume: 0.8 }
     }
 }
 
@@ -74,17 +74,26 @@ impl StyleFile {
 }
 
 /// How long a pat takes to reach full strength and to fade after it ended.
-const RAMP_IN: f32 = 0.05;
+const RAMP_IN: f32 = 0.02;
 const RAMP_OUT: f32 = 0.22;
 /// The least time between two strokes (of the same creature), so clicking fast strokes fast but never machine-gun loud.
 const STROKE_MIN: Duration = Duration::from_millis(130);
 
 /// The squash of a pat `seconds` after it started, 0 to 1: one stroke per period, pressed in and sprung back, with a little rebound; `faded` seconds after it ended it fades out.
 pub(super) fn amplitude(seconds: f32, ended: Option<f32>, period: f32) -> f32 {
+    // One stroke: a quick press down (the first third), then a slower spring back with a little rebound.
     let phase = (seconds / period.max(0.1)).fract();
-    let wave = 0.5 - 0.5 * (std::f32::consts::TAU * phase).cos();
-    // A soft rebound on the way back up, so the body springs instead of sinking and rising like a sine.
-    let wave = wave * (1.0 + 0.18 * (std::f32::consts::TAU * phase * 2.0).sin().max(0.0) * (1.0 - phase));
+    let smooth = |x: f32| {
+        let x = x.clamp(0.0, 1.0);
+        x * x * (3.0 - 2.0 * x)
+    };
+    const PRESS: f32 = 0.3;
+    let wave = if phase < PRESS {
+        smooth(phase / PRESS)
+    } else {
+        let back = (phase - PRESS) / (1.0 - PRESS);
+        (1.0 - smooth(back)) + 0.12 * (std::f32::consts::TAU * back).sin().max(0.0) * (1.0 - back)
+    };
     let rise = (seconds / RAMP_IN).clamp(0.0, 1.0);
     let fade = ended.map_or(1.0, |e| (1.0 - e / RAMP_OUT).clamp(0.0, 1.0));
     (wave * rise * fade).clamp(0.0, 1.0)
@@ -278,12 +287,12 @@ impl Game<'_> {
             if sound {
                 // Every stroke is a soft rub with a little changing pitch; now and then the creature answers in its own voice.
                 let r = self.particles.level_random().next_double() as f32;
-                let rub = if style.sound == "auto" || style.sound.is_empty() { Some("minecraft:block.wool.hit".to_owned()) } else { None };
+                let rub = if style.sound == "auto" || style.sound.is_empty() { Some("minecraft:item.armor.equip_leather".to_owned()) } else { None };
                 if let Some(event) = rub {
-                    self.audio.play_unshared(&event, Some(at), style.volume * 0.7, 1.25 + r * 0.35);
+                    self.audio.play_unshared(&event, Some(at), style.volume, 1.35 + r * 0.4);
                 }
-                if nth % 3 == 1 && let Some(event) = self.pat_sound_for(id, &style.sound) {
-                    self.audio.play_unshared(&event, Some(at), style.volume * 0.6, 1.2 + r * 0.2);
+                if nth % 2 == 1 && let Some(event) = self.pat_sound_for(id, &style.sound) {
+                    self.audio.play_unshared(&event, Some(at), style.volume * 0.9, 1.1 + r * 0.2);
                 }
             }
         }
@@ -385,14 +394,14 @@ mod tests {
     fn the_squash_is_a_slow_wave_that_eases_in_and_fades_out() {
         assert_eq!(amplitude(0.0, None, PERIOD), 0.0);
         // Half a period in, the wave is at its height (and the ramp is long done).
-        assert!((amplitude(PERIOD / 2.0, None, PERIOD) - 1.0).abs() < 1e-3);
+        assert!((amplitude(PERIOD * 0.3, None, PERIOD) - 1.0).abs() < 1e-3);
         assert!(amplitude(0.05, None, PERIOD) < amplitude(0.2, None, PERIOD) + 1.0, "eased in");
-        assert!(amplitude(0.02, None, PERIOD) < 0.1, "a stroke starts gently");
+        assert!(amplitude(0.02, None, PERIOD) < 0.2, "a stroke starts gently");
         assert!((amplitude(PERIOD, None, PERIOD)).abs() < 1e-3, "a full period is back at rest");
         // After the end it fades to nothing.
-        let half = amplitude(PERIOD / 2.0, Some(RAMP_OUT / 2.0), PERIOD);
+        let half = amplitude(PERIOD * 0.3, Some(RAMP_OUT / 2.0), PERIOD);
         assert!(half > 0.4 && half < 0.6);
-        assert_eq!(amplitude(PERIOD / 2.0, Some(RAMP_OUT), PERIOD), 0.0);
+        assert_eq!(amplitude(PERIOD * 0.3, Some(RAMP_OUT), PERIOD), 0.0);
         for i in 0..200 {
             let a = amplitude(i as f32 * 0.03, None, PERIOD);
             assert!((0.0..=1.0).contains(&a));
