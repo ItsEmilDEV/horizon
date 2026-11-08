@@ -55,6 +55,7 @@ mod belumi_client;
 mod belumi_replay;
 mod belumi_freecam;
 mod belumi_accounts;
+mod belumi_placement;
 mod belumi_blueprint;
 mod belumi_ping;
 mod belumi_export;
@@ -5572,7 +5573,7 @@ impl Game<'_> {
         if self.creative {
             if self.destroy_delay == 0 {
                 self.break_block(hit.pos)?;
-                self.destroy_delay = 5;
+                self.destroy_delay = self.belumi_destroy_delay();
             }
             return Ok(());
         }
@@ -5646,7 +5647,7 @@ impl Game<'_> {
             let pos = m.pos;
             self.mining = None;
             self.break_block(pos)?;
-            self.destroy_delay = 5;
+            self.destroy_delay = self.belumi_destroy_delay();
         }
         Ok(())
     }
@@ -6342,7 +6343,7 @@ impl Game<'_> {
             && self.sleeping.is_none()
         {
             self.use_with_hand()?;
-            self.use_delay = 4;
+            self.use_delay = self.belumi_use_delay();
         }
         Ok(())
     }
@@ -13467,7 +13468,7 @@ impl Game<'_> {
                 // item is in use.
                 if pressed && self.using.is_none() {
                     self.use_with_hand()?;
-                    self.use_delay = 4;
+                    self.use_delay = self.belumi_use_delay();
                 }
             }
             MouseButton::Middle if pressed => {

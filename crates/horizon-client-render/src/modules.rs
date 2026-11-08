@@ -289,6 +289,11 @@ pub struct Misc {
     pub redstone_numbers: bool,
     /// Pings and shared waypoints between Belumi players on a server.
     pub pings: bool,
+    /// Accurate block placement: no wait between blocks placed with the right button held, none between blocks broken in
+    /// creative (`accurate_break`).
+    pub accurate_placement: bool,
+    pub accurate_break: bool,
+    pub accurate_key: String,
     pub ping_key: String,
     /// What the compass module points at: a waypoint's name, `back` for where the trail began, empty for the nearest.
     pub compass_target: String,
@@ -311,6 +316,9 @@ impl Default for Misc {
             world_history: true,
             redstone_numbers: false,
             pings: true,
+            accurate_placement: false,
+            accurate_break: true,
+            accurate_key: String::new(),
             ping_key: "key.keyboard.z".into(),
             compass_target: String::new(),
             low_durability_warning: true,

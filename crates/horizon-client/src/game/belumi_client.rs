@@ -82,6 +82,8 @@ pub(super) enum Act {
     HistoryOn,
     RedstoneNumbers,
     PingsOn,
+    AccurateOn,
+    AccurateBreak,
     BlueprintLayer(i32),
     TickCmd(&'static str),
     CombatClear,
@@ -667,6 +669,7 @@ impl Game<'_> {
         self.belumi_replay_key(key, pressed);
         self.belumi_photo_key(key, pressed);
         self.belumi_ping_key(key, pressed);
+        self.belumi_placement_key(key, pressed);
         let menu_key = self.modules().menu_key.clone();
         if pressed && key == menu_key && self.native_playing() {
             self.client_open();
@@ -1034,6 +1037,12 @@ impl Game<'_> {
             Act::BlueprintLayer(_) => {
                 self.blueprint_act(&act);
             }
+            Act::AccurateOn => self.belumi_placement_toggle(),
+            Act::AccurateBreak => {
+                let m = self.modules();
+                m.misc.accurate_break = !m.misc.accurate_break;
+                self.modules_changed();
+            }
             Act::PingsOn => {
                 let m = self.modules();
                 m.misc.pings = !m.misc.pings;
@@ -1388,6 +1397,8 @@ impl Game<'_> {
             ("Shulker preview".into(), "Contents in the tooltip".into(), Some(m.misc.container_preview), Act::ContainerPreview, None),
             ("World history".into(), "Older chunk versions, /rollback".into(), Some(m.misc.world_history), Act::HistoryOn, None),
             ("Sound physics".into(), "Reverb of the room you are in".into(), Some(m.misc.sound_physics), Act::SoundOn, None),
+            ("Accurate placement".into(), "Fast blocks (some servers: cheat)".into(), Some(m.misc.accurate_placement), Act::AccurateOn, None),
+            ("Accurate creative break".into(), "No wait between breaks".into(), Some(m.misc.accurate_break), Act::AccurateBreak, None),
             ("Pings".into(), "Z marks a spot for friends".into(), Some(m.misc.pings), Act::PingsOn, None),
             ("Blueprint".into(), "Show a .schem / .litematic plan".into(), None, Act::Page(Page::Blueprint), Some(Page::Blueprint)),
             ("Redstone workbench".into(), "Signals, /tick controls".into(), None, Act::Page(Page::Redstone), Some(Page::Redstone)),

@@ -5300,8 +5300,9 @@ impl Game<'_> {
                 direction: face,
                 sequence: seq,
             }));
+            let delay = self.belumi_destroy_delay();
             if let Some(r) = self.remote.as_mut() {
-                r.destroy_delay = 5;
+                r.destroy_delay = delay;
             }
             return;
         }
@@ -5384,9 +5385,10 @@ impl Game<'_> {
                 direction: face,
                 sequence: seq,
             }));
+            let delay = self.belumi_destroy_delay();
             if let Some(r) = self.remote.as_mut() {
                 r.destroying = None;
-                r.destroy_delay = 5;
+                r.destroy_delay = delay;
             }
             self.mining = None;
         } else {
@@ -5464,7 +5466,7 @@ impl Game<'_> {
         if self.remote.as_ref().is_some_and(|r| r.destroying.is_some()) {
             return;
         }
-        self.use_delay = 4;
+        self.use_delay = self.belumi_use_delay();
         // Resolve the crosshair once. A passing entity interaction keeps
         // that target and may only fall back to using the item itself.
         let entity = self.entity_targeted();
