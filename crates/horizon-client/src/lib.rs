@@ -103,6 +103,7 @@ pub mod random_tick_sections;
 pub mod recipe_book;
 pub mod recipe_book_screen;
 pub mod reconnect;
+pub mod blueprint;
 pub mod save;
 pub mod scoreboard_cmd;
 pub mod screen_layout;

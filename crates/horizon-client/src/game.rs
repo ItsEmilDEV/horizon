@@ -55,6 +55,7 @@ mod belumi_client;
 mod belumi_replay;
 mod belumi_freecam;
 mod belumi_accounts;
+mod belumi_blueprint;
 mod belumi_ping;
 mod belumi_export;
 mod belumi_redstone;
@@ -2140,6 +2141,7 @@ struct Game<'a> {
     belumi_redstone: belumi_redstone::Redstone,
     belumi_export: belumi_export::Export,
     belumi_ping: belumi_ping::Pings,
+    belumi_plans: belumi_blueprint::Plans,
     belumi_free: belumi_freecam::FreecamState,
     belumi_client: belumi_client::ClientState,
     belumi_replay: belumi_replay::ReplayState,
@@ -12818,6 +12820,7 @@ impl Game<'_> {
         // FishingHookRenderer's line, then DebugRenderer: chunk borders and
         // hitboxes (F3+G, F3+B).
         let mut lines = self.fishing_line(alpha, size);
+        lines.extend(self.belumi_blueprint_lines());
         let mut on_top = Vec::new();
         if self.show_hitboxes || self.show_chunk_borders {
             let g = self.debug_gizmos(alpha as f32);
@@ -15258,6 +15261,7 @@ impl<'a> Game<'a> {
             belumi_redstone: Default::default(),
             belumi_export: Default::default(),
             belumi_ping: Default::default(),
+            belumi_plans: Default::default(),
             belumi_free: Default::default(),
             belumi_client: Default::default(),
             belumi_replay: Default::default(),

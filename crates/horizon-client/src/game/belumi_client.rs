@@ -37,6 +37,7 @@ pub(super) enum Page {
     Chests,
     Combat,
     Redstone,
+    Blueprint,
     Plugin,
     Replays,
     Replay,
@@ -81,6 +82,7 @@ pub(super) enum Act {
     HistoryOn,
     RedstoneNumbers,
     PingsOn,
+    BlueprintLayer(i32),
     TickCmd(&'static str),
     CombatClear,
     ChestMark(usize),
@@ -1029,6 +1031,9 @@ impl Game<'_> {
             Act::PluginOpen(plugin) => self.belumi_client.plugin_page = Some(plugin),
             Act::PluginPress(plugin, id, value) => self.belumi_plugin_press(&plugin, &id, value),
             Act::PickAccount(i) => self.belumi_switch_account(i),
+            Act::BlueprintLayer(_) => {
+                self.blueprint_act(&act);
+            }
             Act::PingsOn => {
                 let m = self.modules();
                 m.misc.pings = !m.misc.pings;
@@ -1222,6 +1227,7 @@ impl Game<'_> {
             Page::Chests => self.draw_chests_page(batch, w, h),
             Page::Combat => self.draw_combat_page(batch, w, h),
             Page::Redstone => self.draw_redstone_page(batch, w, h),
+            Page::Blueprint => self.draw_blueprint_page(batch, w, h),
             Page::Replays => self.draw_replays_page(batch, w, h),
             Page::Replay => self.draw_replay_controls_page(batch, w, h),
         }
@@ -1383,6 +1389,7 @@ impl Game<'_> {
             ("World history".into(), "Older chunk versions, /rollback".into(), Some(m.misc.world_history), Act::HistoryOn, None),
             ("Sound physics".into(), "Reverb of the room you are in".into(), Some(m.misc.sound_physics), Act::SoundOn, None),
             ("Pings".into(), "Z marks a spot for friends".into(), Some(m.misc.pings), Act::PingsOn, None),
+            ("Blueprint".into(), "Show a .schem / .litematic plan".into(), None, Act::Page(Page::Blueprint), Some(Page::Blueprint)),
             ("Redstone workbench".into(), "Signals, /tick controls".into(), None, Act::Page(Page::Redstone), Some(Page::Redstone)),
             ("Combat log".into(), "Swings, hits, damage, CPS".into(), Some(m.misc.combat), Act::CombatOn, Some(Page::Combat)),
             ("Chest memory".into(), "Find items with /chests".into(), Some(m.misc.chest_memory), Act::ChestsOn, Some(Page::Chests)),
