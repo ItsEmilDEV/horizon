@@ -270,6 +270,11 @@ impl Game<'_> {
     }
 
     /// A waypoint where the player died, replacing the last one.
+    /// The player is dead (or just was): a dimension change then is the respawn, not a portal.
+    pub(super) fn belumi_death_pending(&self) -> bool {
+        self.belumi_maps.died || self.screen == super::Screen::Dead
+    }
+
     pub(super) fn belumi_death_waypoint(&mut self) {
         let dead = self.screen == super::Screen::Dead;
         if !dead {
@@ -309,13 +314,13 @@ impl Game<'_> {
         self.belumi_maps.centre = None;
     }
 
-    fn belumi_waypoint_store(&mut self) -> &mut Waypoints {
+    pub(super) fn belumi_waypoint_store(&mut self) -> &mut Waypoints {
         self.belumi_maps
             .waypoints
             .get_or_insert_with(|| Waypoints::load(&Self::belumi_dir()))
     }
 
-    fn belumi_save_waypoints(&self) {
+    pub(super) fn belumi_save_waypoints(&self) {
         if let Some(w) = &self.belumi_maps.waypoints {
             w.save(&Self::belumi_dir());
         }

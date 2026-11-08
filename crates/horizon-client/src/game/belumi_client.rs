@@ -68,6 +68,7 @@ pub(super) enum Act {
     Tooltips,
     ContainerPreview,
     DistantChunks,
+    Trail,
     PickAccount(usize),
     PluginOpen(String),
     PluginPress(String, String, bool),
@@ -504,7 +505,7 @@ impl Game<'_> {
                 text(&mut draws, &label, 13.0, 3.0, 0x00FF_FFFF);
                 (w, h, empty) = (tw + 16.0, 14.0, !live);
             }
-            "fps" | "ping" | "coords" => {
+            "fps" | "ping" | "coords" | "compass" => {
                 let (label, color) = match p.id.as_str() {
                     "fps" => {
                         let f = self.fps.round() as i32;
@@ -514,6 +515,7 @@ impl Game<'_> {
                         Some(ms) => (format!("{ms} ms"), if ms <= 80 { 0x004D_FF6A } else if ms <= 160 { 0x00FF_E14D } else { 0x00FF_6B6B }),
                         None => ("- ms".to_owned(), 0x00AA_B3C6),
                     },
+                    "compass" => self.belumi_compass_text(),
                     _ => match self.eye_position() {
                         Some([x, y, z]) => (format!("{:.0} {:.0} {:.0}", x.floor(), (y - 1.62).floor(), z.floor()), 0x00FF_FFFF),
                         None => ("- - -".to_owned(), 0x00AA_B3C6),
@@ -968,6 +970,11 @@ impl Game<'_> {
             Act::PluginOpen(plugin) => self.belumi_client.plugin_page = Some(plugin),
             Act::PluginPress(plugin, id, value) => self.belumi_plugin_press(&plugin, &id, value),
             Act::PickAccount(i) => self.belumi_switch_account(i),
+            Act::Trail => {
+                let m = self.modules();
+                m.misc.trail = !m.misc.trail;
+                self.modules_changed();
+            }
             Act::DistantChunks => {
                 let m = self.modules();
                 m.misc.distant_chunks = !m.misc.distant_chunks;
@@ -1267,6 +1274,7 @@ impl Game<'_> {
             ("Crosshair".into(), "Your own shape and colour".into(), Some(m.crosshair.enabled), Act::CrosshairOn, Some(Page::Crosshair)),
             ("Item tooltips".into(), "Item id and durability numbers".into(), Some(m.misc.tooltips), Act::Tooltips, None),
             ("Shulker preview".into(), "Contents in the tooltip".into(), Some(m.misc.container_preview), Act::ContainerPreview, None),
+            ("Breadcrumb trail".into(), "Dots behind you, for the way back".into(), Some(m.misc.trail), Act::Trail, None),
             ("Distant chunks".into(), "Keep far chunks, cache them".into(), Some(m.misc.distant_chunks), Act::DistantChunks, None),
             ("Break warning".into(), "Flash when gear is low".into(), Some(m.misc.low_durability_warning), Act::Warning, None),
             ("Discord presence".into(), "What your profile shows".into(), Some(self.settings.extras.discord_presence), Act::Extra("discord"), Some(Page::Discord)),

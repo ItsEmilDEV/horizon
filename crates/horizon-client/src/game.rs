@@ -55,6 +55,7 @@ mod belumi_client;
 mod belumi_replay;
 mod belumi_freecam;
 mod belumi_accounts;
+mod belumi_trail;
 mod belumi_distant;
 mod belumi_maps;
 mod map_entities;
@@ -2121,6 +2122,7 @@ struct Game<'a> {
     belumi: belumi::BelumiState,
     belumi_maps: belumi_maps::MapState,
     belumi_distant: belumi_distant::Distant,
+    belumi_trail: belumi_trail::Trail,
     belumi_free: belumi_freecam::FreecamState,
     belumi_client: belumi_client::ClientState,
     belumi_replay: belumi_replay::ReplayState,
@@ -15230,6 +15232,7 @@ impl<'a> Game<'a> {
             belumi: Default::default(),
             belumi_maps: Default::default(),
             belumi_distant: Default::default(),
+            belumi_trail: Default::default(),
             belumi_free: Default::default(),
             belumi_client: Default::default(),
             belumi_replay: Default::default(),

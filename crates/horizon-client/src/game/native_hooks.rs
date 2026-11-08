@@ -315,6 +315,7 @@ impl Game<'_> {
         self.modules_tick();
         self.belumi_explore(elapsed.as_secs_f32());
         self.belumi_distant_tick();
+        self.belumi_trail_frame();
     }
     /// Once a tick, in every `Game`: the window's (in single player, on LAN
     /// and on servers), and the server's own (`native_window` is false
@@ -351,6 +352,7 @@ impl Game<'_> {
     pub(super) fn native_hud(&mut self, batch: &mut HudBatch, corners: &mut Corners) {
         self.belumi_hud(batch, corners);
         self.belumi_draw_labels(batch);
+        self.belumi_draw_trail(batch);
         self.belumi_modules_draw(batch);
         self.belumi_draw_worldmap(batch);
     }
@@ -376,6 +378,7 @@ impl Game<'_> {
         self.belumi_plugins_command(command, ran);
         self.belumi_client_command(command, ran);
         self.belumi_command(command, ran);
+        self.belumi_trail_command(command, ran);
         self.belumi_voice_command(command, ran);
         self.belumi_map_command(command, ran);
     }
