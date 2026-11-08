@@ -103,6 +103,49 @@ impl Game<'_> {
         };
         self.native_text(batch, note, [x + 10.0, ry], 0x008A_93A8, false);
     }
+
+    /// The Plugin page: the screens plugins made, or one plugin's rows.
+    pub(super) fn draw_plugin_page(&mut self, batch: &mut HudBatch, w: f32, h: f32) {
+        use super::belumi_client::Page;
+        use super::belumi_plugins::RowView;
+        self.native_fill(batch, [0.0, 0.0, w, h], 0x9000_0000);
+        let screens = self.belumi_plugin_screens();
+        let shown = self.belumi_client.plugin_page.clone();
+        let current = shown.as_ref().and_then(|p| screens.iter().find(|s| &s.plugin == p)).cloned();
+        let rows = current.as_ref().map_or(screens.len(), |s| s.rows.len()).clamp(1, 24) as f32;
+        let pw = 320.0_f32.min(w - 12.0);
+        let ph = (44.0 + rows * 22.0).min(h - 16.0);
+        let (x, y) = ((w - pw) / 2.0, ((h - ph) / 2.0).floor());
+        let title = current.as_ref().map_or("Plugin screens".to_owned(), |s| if s.title.is_empty() { s.plugin.clone() } else { s.title.clone() });
+        self.panel(batch, [x, y, pw, ph], &title);
+        let back = if current.is_some() { Act::Page(Page::Plugin) } else { Act::Page(Page::Modules) };
+        self.client_button(batch, [x + pw - 54.0, y + 3.0, 48.0, 14.0], "Back", None, back);
+        let mut ry = y + 28.0;
+        let Some(screen) = current else {
+            if screens.is_empty() {
+                self.native_text(batch, "No plugin has a screen. Plugins with the", [x + 10.0, ry], 0x008A_93A8, false);
+                self.native_text(batch, "`screen` permission can add one.", [x + 10.0, ry + 12.0], 0x008A_93A8, false);
+            }
+            for s in &screens {
+                let label = if s.title.is_empty() { s.plugin.clone() } else { format!("{} ({})", s.title, s.plugin) };
+                self.client_button(batch, [x + 10.0, ry, pw - 20.0, 16.0], &label, None, Act::PluginOpen(s.plugin.clone()));
+                ry += 22.0;
+            }
+            return;
+        };
+        for row in &screen.rows {
+            match row {
+                RowView::Label(text) => self.native_text(batch, text, [x + 12.0, ry + 4.0], 0x00FF_FFFF, false),
+                RowView::Button { id, text } => {
+                    self.client_button(batch, [x + 10.0, ry, pw - 20.0, 16.0], text, None, Act::PluginPress(screen.plugin.clone(), id.clone(), false));
+                }
+                RowView::Toggle { id, text, on } => {
+                    self.client_button(batch, [x + 10.0, ry, pw - 20.0, 16.0], text, Some(*on), Act::PluginPress(screen.plugin.clone(), id.clone(), !on));
+                }
+            }
+            ry += 22.0;
+        }
+    }
 }
 
 #[cfg(test)]

@@ -136,6 +136,7 @@ impl Game<'_> {
     /// Whether distant chunks are on and this is a server (single player and LAN worlds have their own saves).
     pub(super) fn belumi_distant_on(&self) -> bool {
         self.remote.is_some()
+            && self.belumi_scope().starts_with("server:")
             && !self.belumi_replay_active()
             && self.modules_ref().is_none_or(|m| m.misc.distant_chunks)
     }

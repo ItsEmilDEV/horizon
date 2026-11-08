@@ -9,6 +9,22 @@ pub(super) struct PluginState {
     warned: bool,
 }
 
+/// A plugin's screen as the client screen draws it.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct ScreenView {
+    pub(super) plugin: String,
+    pub(super) title: String,
+    pub(super) rows: Vec<RowView>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(not(feature = "belumi-plugins"), allow(dead_code))]
+pub(super) enum RowView {
+    Label(String),
+    Button { id: String, text: String },
+    Toggle { id: String, text: String, on: bool },
+}
+
 #[cfg_attr(not(feature = "belumi-plugins"), allow(dead_code))]
 pub(super) fn player_json(
     at: [f64; 3],
@@ -83,11 +99,46 @@ mod real {
             };
             let lines = host.shared().take_chat();
             let errors = host.take_errors();
+            let (open, close) = host.shared().take_open().map_or((None, host.shared().take_close()), |o| (Some(o), false));
             for l in lines {
                 self.native_chat(&l);
             }
             for e in errors {
                 self.native_chat(&format!("Plugin error: {e}"));
+            }
+            if let Some(plugin) = open {
+                self.client_open_plugin(Some(plugin));
+            }
+            if close {
+                self.client_close_plugin();
+            }
+        }
+
+        pub(in crate::game) fn belumi_plugin_screens(&self) -> Vec<ScreenView> {
+            use belumi_client_plugins::ScreenRow;
+            let Some(host) = self.belumi_plugins.host.as_ref() else { return Vec::new() };
+            host.shared()
+                .screens()
+                .into_iter()
+                .map(|(plugin, spec)| ScreenView {
+                    plugin,
+                    title: spec.title,
+                    rows: spec
+                        .rows
+                        .into_iter()
+                        .map(|r| match r {
+                            ScreenRow::Label { text } => RowView::Label(text),
+                            ScreenRow::Button { id, text } => RowView::Button { id, text },
+                            ScreenRow::Toggle { id, text, on } => RowView::Toggle { id, text, on },
+                        })
+                        .collect(),
+                })
+                .collect()
+        }
+
+        pub(in crate::game) fn belumi_plugin_press(&mut self, plugin: &str, id: &str, value: bool) {
+            if let Some(host) = self.belumi_plugins.host.as_mut() {
+                host.screen_event(plugin, id, value);
             }
         }
 
@@ -214,6 +265,10 @@ mod stub {
         pub(in crate::game) fn belumi_plugin_lines(&self) -> Vec<String> {
             Vec::new()
         }
+        pub(in crate::game) fn belumi_plugin_screens(&self) -> Vec<ScreenView> {
+            Vec::new()
+        }
+        pub(in crate::game) fn belumi_plugin_press(&mut self, _plugin: &str, _id: &str, _value: bool) {}
     }
 }
 

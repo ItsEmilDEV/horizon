@@ -33,6 +33,7 @@ pub(super) enum Page {
     Chat,
     Discord,
     Accounts,
+    Plugin,
     Replays,
     Replay,
 }
@@ -68,6 +69,8 @@ pub(super) enum Act {
     ContainerPreview,
     DistantChunks,
     PickAccount(usize),
+    PluginOpen(String),
+    PluginPress(String, String, bool),
     Reconnect,
     Warning,
     Extra(&'static str),
@@ -79,6 +82,8 @@ pub(super) struct ClientState {
     pub(super) saved: Option<super::belumi_accounts::Saved>,
     /// The game ends at the next chance: an account switch was asked for.
     pub(super) switch_quit: bool,
+    /// The plugin whose screen the Plugin page shows; none shows the list.
+    pub(super) plugin_page: Option<String>,
     modules: Option<Modules>,
     page: Page,
     selected: Option<String>,
@@ -630,6 +635,26 @@ impl Game<'_> {
         self.capture(false);
     }
 
+    /// A plugin asked for its screen (or the list of them with none): the client screen opens on the Plugin page.
+    #[cfg_attr(not(feature = "belumi-plugins"), allow(dead_code))]
+    pub(super) fn client_open_plugin(&mut self, plugin: Option<String>) {
+        if !self.native_playing() {
+            return;
+        }
+        if self.screen != Screen::BelumiClient {
+            self.client_open();
+        }
+        self.belumi_client.page = Page::Plugin;
+        self.belumi_client.plugin_page = plugin;
+    }
+
+    #[cfg_attr(not(feature = "belumi-plugins"), allow(dead_code))]
+    pub(super) fn client_close_plugin(&mut self) {
+        if self.belumi_client.page == Page::Plugin {
+            self.belumi_client_close_screen();
+        }
+    }
+
     pub(super) fn belumi_client_close_screen(&mut self) {
         if self.screen == Screen::BelumiClient {
             self.modules_save_now();
@@ -838,6 +863,7 @@ impl Game<'_> {
                 self.chat_boxes_commit();
                 self.belumi_client.page = page;
                 self.belumi_client.saved = None;
+                self.belumi_client.plugin_page = None;
                 if page == Page::Replays {
                     self.replay_page_open();
                 }
@@ -939,6 +965,8 @@ impl Game<'_> {
                 m.misc.tooltips = !m.misc.tooltips;
                 self.modules_changed();
             }
+            Act::PluginOpen(plugin) => self.belumi_client.plugin_page = Some(plugin),
+            Act::PluginPress(plugin, id, value) => self.belumi_plugin_press(&plugin, &id, value),
             Act::PickAccount(i) => self.belumi_switch_account(i),
             Act::DistantChunks => {
                 let m = self.modules();
@@ -1080,6 +1108,7 @@ impl Game<'_> {
             Page::Chat => self.draw_chat_page(batch, w, h),
             Page::Discord => self.draw_discord_page(batch, w, h),
             Page::Accounts => self.draw_accounts_page(batch, w, h),
+            Page::Plugin => self.draw_plugin_page(batch, w, h),
             Page::Replays => self.draw_replays_page(batch, w, h),
             Page::Replay => self.draw_replay_controls_page(batch, w, h),
         }
@@ -1241,6 +1270,7 @@ impl Game<'_> {
             ("Distant chunks".into(), "Keep far chunks, cache them".into(), Some(m.misc.distant_chunks), Act::DistantChunks, None),
             ("Break warning".into(), "Flash when gear is low".into(), Some(m.misc.low_durability_warning), Act::Warning, None),
             ("Discord presence".into(), "What your profile shows".into(), Some(self.settings.extras.discord_presence), Act::Extra("discord"), Some(Page::Discord)),
+            ("Plugin screens".into(), "Screens made by plugins".into(), None, Act::Page(Page::Plugin), Some(Page::Plugin)),
             ("Switch account".into(), "Another launcher account".into(), None, Act::Page(Page::Accounts), Some(Page::Accounts)),
             ("Chat tools".into(), "Time, filter, sound".into(), None, Act::Page(Page::Chat), Some(Page::Chat)),
             ("Replays and clips".into(), "Record, clip, watch again".into(), Some(m.replay.record), Act::Replay(super::belumi_replay::RAct::Record), Some(Page::Replays)),
