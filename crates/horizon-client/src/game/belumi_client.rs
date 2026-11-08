@@ -38,6 +38,7 @@ pub(super) enum Page {
     Combat,
     Redstone,
     Blueprint,
+    Sounds,
     Plugin,
     Replays,
     Replay,
@@ -85,6 +86,8 @@ pub(super) enum Act {
     AccurateOn,
     LightOn,
     GammaCycle,
+    SoundLevel(String, u8),
+    SoundsReset,
     AccurateBreak,
     BlueprintLayer(i32),
     TickCmd(&'static str),
@@ -1052,6 +1055,9 @@ impl Game<'_> {
             Act::BlueprintLayer(_) => {
                 self.blueprint_act(&act);
             }
+            Act::SoundLevel(..) | Act::SoundsReset => {
+                self.belumi_sounds_act(&act);
+            }
             Act::GammaCycle => self.belumi_gamma_cycle(),
             Act::LightOn => {
                 let m = self.modules();
@@ -1258,6 +1264,7 @@ impl Game<'_> {
             Page::Combat => self.draw_combat_page(batch, w, h),
             Page::Redstone => self.draw_redstone_page(batch, w, h),
             Page::Blueprint => self.draw_blueprint_page(batch, w, h),
+            Page::Sounds => self.draw_sounds_page(batch, w, h),
             Page::Replays => self.draw_replays_page(batch, w, h),
             Page::Replay => self.draw_replay_controls_page(batch, w, h),
         }
@@ -1418,6 +1425,7 @@ impl Game<'_> {
             ("Shulker preview".into(), "Contents in the tooltip".into(), Some(m.misc.container_preview), Act::ContainerPreview, None),
             ("World history".into(), "Older chunk versions, /rollback".into(), Some(m.misc.world_history), Act::HistoryOn, None),
             ("Sound physics".into(), "Reverb of the room you are in".into(), Some(m.misc.sound_physics), Act::SoundOn, None),
+            ("Sound controller".into(), "Turn single sounds down".into(), None, Act::Page(Page::Sounds), Some(Page::Sounds)),
             ("Gamma boost".into(), format!("Brightness beyond the slider: {} of 15", m.misc.gamma_level), Some(m.misc.gamma_level > 0), Act::GammaCycle, None),
             ("Light overlay".into(), "X where monsters can spawn".into(), Some(m.misc.light_overlay), Act::LightOn, None),
             ("Accurate placement".into(), "Fast blocks (some servers: cheat)".into(), Some(m.misc.accurate_placement), Act::AccurateOn, None),

@@ -19,6 +19,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+/// How many different sound events the Sound controller remembers having heard.
+const RECENT_EVENTS: usize = 40;
+
 /// An OpenAL source's state.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum State {
@@ -228,6 +231,11 @@ pub struct Audio {
     /// How many times each positional sound played (the control socket's `status`),
     /// with or without an audio device.
     pub heard: std::collections::BTreeMap<String, u32>,
+    /// A level for single sound events (the Sound controller): 0 mutes one, 1 leaves it as it is. Kept by the
+    /// normalized event id.
+    levels: std::collections::HashMap<String, f32>,
+    /// The sound events played last, newest first, each once (for choosing which one to turn down).
+    recent: std::collections::VecDeque<String>,
     /// How many times each selection was stopped ("record *", "* minecraft:…", `*` for
     /// any), with or without an audio device, as `heard`.
     pub stopped: std::collections::BTreeMap<String, u32>,
@@ -719,6 +727,8 @@ impl Audio {
             source_override: None,
             capture: None,
             heard: Default::default(),
+            levels: Default::default(),
+            recent: Default::default(),
             stopped: Default::default(),
             preview: Default::default(),
         }
@@ -936,6 +946,12 @@ impl Audio {
         pitch: f32,
         seed: i64,
     ) {
+        // A muted event is not played, not heard (no subtitle) and not handed on to guests.
+        let normalized = crate::sound_events::normalize(event);
+        if self.levels.get(&normalized).is_some_and(|l| *l <= 0.0) {
+            self.remember_event(&normalized);
+            return;
+        }
         if let (Some(capture), Some(at)) = (self.capture.as_mut(), at) {
             capture.push((event.to_owned(), at, volume, pitch));
         }
@@ -943,7 +959,12 @@ impl Audio {
             *self.heard.entry(event.to_owned()).or_default() += 1;
         }
         self.sync_volumes();
-        let event = crate::sound_events::normalize(event);
+        let event = normalized;
+        self.remember_event(&event);
+        let volume = match self.levels.get(&event) {
+            Some(level) => volume * level.min(1.0),
+            None => volume,
+        };
         let source = self
             .source_override
             .unwrap_or_else(|| crate::settings::sound_source(&event));
@@ -965,6 +986,24 @@ impl Audio {
         };
         self.play_instance(instance, false);
     }
+    fn remember_event(&mut self, event: &str) {
+        if let Some(i) = self.recent.iter().position(|e| e == event) {
+            self.recent.remove(i);
+        }
+        self.recent.push_front(event.to_owned());
+        self.recent.truncate(RECENT_EVENTS);
+    }
+
+    /// The levels of single sound events, 0 to 1 (a level of 1 is the same as none). Replaces the earlier ones.
+    pub fn set_event_levels(&mut self, levels: impl IntoIterator<Item = (String, f32)>) {
+        self.levels = levels.into_iter().filter(|(_, l)| *l < 1.0).map(|(e, l)| (crate::sound_events::normalize(&e), l.max(0.0))).collect();
+    }
+
+    /// The sound events played last, newest first.
+    pub fn recent_events(&self) -> Vec<String> {
+        self.recent.iter().cloned().collect()
+    }
+
     /// Play a sound on a given `SoundSource` index (`/playsound`).
     pub fn play_on(
         &mut self,
@@ -1190,6 +1229,21 @@ mod tests {
         let tail = |v: &[f32]| v[2 * 4000..].iter().map(|s| s * s).sum::<f32>();
         assert!(tail(&dry) < 1e-9);
         assert!(tail(&wet) > 1e-6);
+    }
+
+    #[test]
+    fn a_muted_event_does_not_play_a_lowered_one_is_quieter_and_the_recent_list_has_each_once() {
+        let mut audio = Audio::silent(Path::new("."));
+        audio.play("minecraft:block.stone.break", None, 1.0, 1.0);
+        audio.play("minecraft:entity.cow.ambient", None, 1.0, 1.0);
+        audio.play("minecraft:block.stone.break", None, 1.0, 1.0);
+        assert_eq!(audio.recent_events(), vec!["minecraft:block.stone.break".to_owned(), "minecraft:entity.cow.ambient".to_owned()]);
+        audio.set_event_levels([("minecraft:entity.cow.ambient".to_owned(), 0.0), ("minecraft:block.stone.break".to_owned(), 1.0)]);
+        assert_eq!(audio.levels.len(), 1, "a level of 1 is the same as none");
+        let before = audio.recent_events().len();
+        audio.play("minecraft:entity.cow.ambient", None, 1.0, 1.0);
+        assert_eq!(audio.recent_events().len(), before);
+        assert_eq!(audio.levels.get("minecraft:entity.cow.ambient"), Some(&0.0));
     }
 
     #[test]
