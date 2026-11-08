@@ -439,6 +439,18 @@ impl Game<'_> {
                 }
                 (w, h) = (bw, bh);
             }
+            "inspect" => {
+                let found = self.belumi_inspect_lines();
+                empty = found.is_none();
+                let lines = found.unwrap_or_else(|| vec![("Nothing in the crosshair".to_owned(), 0x00AA_B3C6)]);
+                let tw = lines.iter().map(|l| HudBatch::text_width(&self.gui.atlas, &l.0)).fold(0.0, f32::max);
+                let (bw, bh) = (tw + 8.0, lines.len() as f32 * 10.0 + 4.0);
+                fill(&mut draws, 0.0, 0.0, bw, bh, 0x9000_0000);
+                for (i, (line, color)) in lines.iter().enumerate() {
+                    text(&mut draws, line, 4.0, 3.0 + i as f32 * 10.0, *color);
+                }
+                (w, h) = (bw, bh);
+            }
             "profiler" => {
                 let lines = self.belumi_profiler_lines();
                 let tw = lines.iter().map(|l| HudBatch::text_width(&self.gui.atlas, &l.0)).fold(0.0, f32::max);

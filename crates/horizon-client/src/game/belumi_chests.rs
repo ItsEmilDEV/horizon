@@ -210,6 +210,18 @@ impl Game<'_> {
         hits
     }
 
+    /// What the container at `pos` held when it was last opened: item and count.
+    pub(super) fn belumi_chest_contents(&mut self, pos: [i32; 3]) -> Vec<(String, u32)> {
+        let scope = self.belumi_scope();
+        let dim = self.native_player().map_or("minecraft:overworld", |p| p.dimension);
+        self.chests_store()
+            .entries
+            .iter()
+            .find(|e| e.scope == scope && e.dimension == dim && [e.x, e.y, e.z] == pos)
+            .map(|e| e.items.iter().map(|s| (s.item.clone(), s.count)).collect())
+            .unwrap_or_default()
+    }
+
     pub(super) fn belumi_chests_command(&mut self, command: &str, ran: &mut bool) {
         let (head, rest) = match command.trim().split_once(char::is_whitespace) {
             Some((h, r)) => (h, r.trim()),
