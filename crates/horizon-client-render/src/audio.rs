@@ -19,6 +19,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+/// The most gain one source can have: 1 for the game, more only with the Sound controller's boost.
+const MAX_GAIN: f32 = 4.0;
+
 /// How many different sound events the Sound controller remembers having heard.
 const RECENT_EVENTS: usize = 40;
 
@@ -496,7 +499,8 @@ fn mix(mixer: &mut Mixer, data: &mut [f32], channels: usize, rate: u32) {
             ]
         };
         let distance = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt() as f32;
-        let gain = c.gain.clamp(0.0, 1.0) * distance_gain(c.linear, distance);
+        // The game never asks for more than 1; only a boost of the Sound controller does (up to 4).
+        let gain = c.gain.clamp(0.0, MAX_GAIN) * distance_gain(c.linear, distance);
         // Relative sources are already in OpenAL's listener space (-Z ahead).
         let [left, right] = if c.relative {
             stereo_gains(d[0] as f32, d[1] as f32, -d[2] as f32)
@@ -961,10 +965,9 @@ impl Audio {
         self.sync_volumes();
         let event = normalized;
         self.remember_event(&event);
-        let volume = match self.levels.get(&event) {
-            Some(level) => volume * level.min(1.0),
-            None => volume,
-        };
+        // Below 1 the level lowers the volume the game asked for; above 1 it boosts the instance after the game's clamps.
+        let level = self.levels.get(&event).copied().unwrap_or(1.0);
+        let volume = volume * level.min(1.0);
         let source = self
             .source_override
             .unwrap_or_else(|| crate::settings::sound_source(&event));
@@ -984,6 +987,8 @@ impl Audio {
                 true,
             ),
         };
+        let mut instance = instance;
+        instance.boost = level.max(1.0);
         self.play_instance(instance, false);
     }
     fn remember_event(&mut self, event: &str) {
@@ -996,7 +1001,7 @@ impl Audio {
 
     /// The levels of single sound events, 0 to 1 (a level of 1 is the same as none). Replaces the earlier ones.
     pub fn set_event_levels(&mut self, levels: impl IntoIterator<Item = (String, f32)>) {
-        self.levels = levels.into_iter().filter(|(_, l)| *l < 1.0).map(|(e, l)| (crate::sound_events::normalize(&e), l.max(0.0))).collect();
+        self.levels = levels.into_iter().filter(|(_, l)| (*l - 1.0).abs() > f32::EPSILON).map(|(e, l)| (crate::sound_events::normalize(&e), l.clamp(0.0, MAX_GAIN))).collect();
     }
 
     /// The sound events played last, newest first.
@@ -1212,6 +1217,23 @@ mod tests {
     }
 
     #[test]
+    fn a_boosted_source_is_louder_than_one_at_the_game_s_gain() {
+        let sound = Arc::new(vec![0.2f32; 400]);
+        let loudness = |gain: f32| {
+            let mut m = Mixer::default();
+            m.channels.insert(
+                1,
+                Channel { samples: Some((sound.clone(), 44_100)), position: 0.0, state: State::Playing, gain, pitch: 1.0, linear: None, looping: false, at: [0.0, 0.0, 1.0], relative: true },
+            );
+            let mut out = vec![0.0f32; 2 * 200];
+            mix(&mut m, &mut out, 2, 44_100);
+            out.iter().fold(0.0f32, |p, s| p.max(s.abs()))
+        };
+        let (normal, boosted) = (loudness(1.0), loudness(2.0));
+        assert!((boosted / normal - 2.0).abs() < 0.05, "{normal} {boosted}");
+    }
+
+    #[test]
     fn a_dry_room_leaves_the_mix_alone_and_a_wet_room_adds_a_tail() {
         let sound = Arc::new(vec![1.0f32; 2000]);
         let play = |wet: f32| {
@@ -1240,6 +1262,9 @@ mod tests {
         assert_eq!(audio.recent_events(), vec!["minecraft:block.stone.break".to_owned(), "minecraft:entity.cow.ambient".to_owned()]);
         audio.set_event_levels([("minecraft:entity.cow.ambient".to_owned(), 0.0), ("minecraft:block.stone.break".to_owned(), 1.0)]);
         assert_eq!(audio.levels.len(), 1, "a level of 1 is the same as none");
+        audio.set_event_levels([("minecraft:block.stone.break".to_owned(), 2.0)]);
+        assert_eq!(audio.levels.get("minecraft:block.stone.break"), Some(&2.0), "above 1 a sound is boosted");
+        audio.set_event_levels([("minecraft:entity.cow.ambient".to_owned(), 0.0)]);
         let before = audio.recent_events().len();
         audio.play("minecraft:entity.cow.ambient", None, 1.0, 1.0);
         assert_eq!(audio.recent_events().len(), before);

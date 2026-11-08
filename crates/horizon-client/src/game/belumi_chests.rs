@@ -418,7 +418,7 @@ mod tests {
 
     #[test]
     fn the_store_round_trips_through_toml() {
-        let store = Store { entries: vec![entry(1, &[("minecraft:gold_ingot", 12)])] };
+        let store = Store { entries: vec![entry(1, &[("minecraft:gold_ingot", 12)])], ender: Vec::new() };
         let text = serde_json::to_string_pretty(&store).unwrap();
         let back: Store = serde_json::from_str(&text).unwrap();
         assert_eq!(back.entries, store.entries);

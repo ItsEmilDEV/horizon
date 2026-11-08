@@ -1,6 +1,6 @@
 //! Sound controller: single sound events turned down or muted (the mod of that name). The page lists the sounds played last;
 //! each gets Mute, 25, 50 and 100 buttons. The levels are kept in `belumi-modules.toml` (`sound_levels`, in percent).
-//! A sound cannot be made louder than the game plays it.
+//! Above 100 the sound is boosted after the game's own volume (up to 200 %); a very loud one is held in check by the mixer's limiter.
 use super::{Game, belumi_client::{Act, Page}};
 use horizon_client::hud::HudBatch;
 use std::collections::BTreeMap;
@@ -24,7 +24,7 @@ pub(super) fn rows(levels: &BTreeMap<String, u8>, recent: &[String], max: usize)
 
 /// A level of 100 is no level: the entry goes.
 pub(super) fn set_level(levels: &mut BTreeMap<String, u8>, event: &str, percent: u8) {
-    if percent >= 100 {
+    if percent == 100 {
         levels.remove(event);
     } else {
         levels.insert(event.to_owned(), percent);
@@ -67,7 +67,7 @@ impl Game<'_> {
         self.native_fill(batch, [0.0, 0.0, w, h], 0x9000_0000);
         let levels = self.modules_ref().map(|m| m.misc.sound_levels.clone()).unwrap_or_default();
         let listed = rows(&levels, &self.audio.recent_events(), ROWS);
-        let pw = 420.0_f32.min(w - 12.0);
+        let pw = 480.0_f32.min(w - 12.0);
         let ph = (56.0 + listed.len().max(1) as f32 * 20.0 + 22.0).min(h - 16.0);
         let (x, y) = ((w - pw) / 2.0, ((h - ph) / 2.0).floor());
         self.panel(batch, [x, y, pw, ph], "Sound controller");
@@ -86,8 +86,8 @@ impl Game<'_> {
                 None => 0x00FF_FFFF,
             };
             self.native_text(batch, short(event), [x + 10.0, ry + 4.0], color, false);
-            let bx = x + pw - 190.0;
-            for (i, (label, percent)) in [("Mute", 0u8), ("25", 25), ("50", 50), ("100", 100)].into_iter().enumerate() {
+            let bx = x + pw - 250.0;
+            for (i, (label, percent)) in [("Mute", 0u8), ("25", 25), ("50", 50), ("100", 100), ("150", 150), ("200", 200)].into_iter().enumerate() {
                 let active = match (level, percent) {
                     (None, 100) => true,
                     (Some(l), p) => l == p,
@@ -97,7 +97,7 @@ impl Game<'_> {
             }
             ry += 20.0;
         }
-        self.native_text(batch, "Sounds cannot be made louder than the game plays them.", [x + 10.0, ry + 4.0], 0x008A_93A8, false);
+        self.native_text(batch, "Above 100 a sound is louder than the game plays it.", [x + 10.0, ry + 4.0], 0x008A_93A8, false);
     }
 }
 
@@ -122,6 +122,8 @@ mod tests {
         assert_eq!(levels.len(), 2);
         set_level(&mut levels, "minecraft:a", 100);
         assert_eq!(levels.keys().collect::<Vec<_>>(), vec!["minecraft:b"]);
+        set_level(&mut levels, "minecraft:c", 150);
+        assert_eq!(levels.get("minecraft:c"), Some(&150), "a boost is kept");
     }
 
     #[test]

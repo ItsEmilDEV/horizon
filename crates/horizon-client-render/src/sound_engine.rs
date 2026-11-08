@@ -125,6 +125,9 @@ pub struct SoundInstance {
     pub sound: Option<Sound>,
     /// `soundEvent != null` after `getOrResolve`, and its subtitle.
     pub event: Option<Option<String>>,
+    /// The Sound controller's factor above the game's own volume (1 is none): applied after the vanilla clamps, so a quiet
+    /// sound can be made louder.
+    pub boost: f32,
 }
 impl SoundInstance {
     #[allow(clippy::too_many_arguments)]
@@ -156,6 +159,7 @@ impl SoundInstance {
             stopped: false,
             sound: None,
             event: None,
+            boost: 1.0,
         }
     }
     /// `new SimpleSoundInstance(sound, source, volume, pitch, random, x, y, z)`.
@@ -798,8 +802,8 @@ impl SoundEngine {
                 continue;
             };
             if source == instance.source || source == MASTER {
-                let (v, s) = (instance.get_volume(), instance.source);
-                let volume = self.calculate_volume(v, s);
+                let (v, s, boost) = (instance.get_volume(), instance.source, instance.boost);
+                let volume = self.calculate_volume(v, s) * boost;
                 if let Some(c) = self.handles.get(&handle).and_then(handle_channel) {
                     backend.set_volume(c, volume);
                 }
@@ -971,7 +975,7 @@ impl SoundEngine {
         }
         let instance = &self.instances[&id];
         let source = instance.source;
-        let volume = self.calculate_volume(instance_volume, source);
+        let volume = self.calculate_volume(instance_volume, source) * instance.boost;
         let mut silently = false;
         if volume == 0.0 {
             if !instance.can_start_silent && source != MUSIC {
@@ -1093,10 +1097,10 @@ impl SoundEngine {
                 self.stop(id, backend);
                 continue;
             }
-            let (v, source) = (instance.get_volume(), instance.source);
+            let (v, source, boost) = (instance.get_volume(), instance.source, instance.boost);
             let pitch = Self::calculate_pitch(instance.get_pitch());
             let position = instance.position;
-            let volume = self.calculate_volume(v, source);
+            let volume = self.calculate_volume(v, source) * boost;
             let Some(handle) = self.channel_of(id) else {
                 continue;
             };
