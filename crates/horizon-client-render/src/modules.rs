@@ -282,6 +282,8 @@ pub struct Misc {
     pub combat: bool,
     /// The world's sounds ring with the room you are in (reverb from the size of the room).
     pub sound_physics: bool,
+    /// Keep older versions of the chunks a world saves over (`/rollback`).
+    pub world_history: bool,
     /// What the compass module points at: a waypoint's name, `back` for where the trail began, empty for the nearest.
     pub compass_target: String,
     pub low_durability_warning: bool,
@@ -300,6 +302,7 @@ impl Default for Misc {
             chest_memory: true,
             combat: true,
             sound_physics: false,
+            world_history: true,
             compass_target: String::new(),
             low_durability_warning: true,
         }

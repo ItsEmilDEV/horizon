@@ -55,6 +55,7 @@ mod belumi_client;
 mod belumi_replay;
 mod belumi_freecam;
 mod belumi_accounts;
+mod belumi_history;
 mod belumi_sound;
 mod belumi_combat;
 mod belumi_photo;

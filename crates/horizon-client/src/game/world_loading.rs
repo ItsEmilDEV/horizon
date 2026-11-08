@@ -397,6 +397,11 @@ pub(super) fn make_streaming(
         horizon_client::save::dimension_dir(world_root, dim.id()),
         shape,
     ));
+    // A rollback asked for with /rollback: before the first chunk of this dimension loads.
+    let restored = save.history_apply_pending();
+    if restored > 0 {
+        log::info!("Belumi: {restored} chunks went back to an older version (rollback)");
+    }
     let mut locator = None;
     let flat = (dim == Dim::Overworld)
         .then(|| horizon_client::save::world_gen_settings(world_root))

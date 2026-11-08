@@ -1953,6 +1953,64 @@ struct Outstanding {
 }
 /// One dimension folder (`dimensions/minecraft/<name>`). Region files are
 /// read lazily by worker threads.
+/// The world's history: before a chunk is overwritten its old version is kept (`SaveDir::history_keep`).
+const HISTORY_DIR: &str = "belumi-history";
+const ROLLBACK_FILE: &str = "belumi-rollback.json";
+/// Versions kept per chunk, and the least time between two of them.
+const HISTORY_KEEP: usize = 6;
+const HISTORY_GAP_SECS: u64 = 300;
+/// What the history may take on the disk (counted since the game started, plus what the folder held then).
+const HISTORY_LIMIT: u64 = 256 << 20;
+static HISTORY_BYTES: AtomicU64 = AtomicU64::new(0);
+static HISTORY_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// Turns the world history on or off (the game's switch).
+pub fn set_history_enabled(on: bool) {
+    HISTORY_ON.store(on, Ordering::Relaxed);
+}
+
+fn history_enabled() -> bool {
+    HISTORY_ON.load(Ordering::Relaxed) && std::env::var_os("BELUMI_NO_HISTORY").is_none()
+}
+
+fn history_now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs())
+}
+
+/// The times of the versions in a chunk's history folder, newest first.
+fn history_versions(dir: &Path) -> Vec<u64> {
+    let mut v: Vec<u64> = fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| e.file_name().into_string().ok()?.strip_suffix(".z")?.parse().ok())
+        .collect();
+    v.sort_unstable_by(|a, b| b.cmp(a));
+    v
+}
+
+/// The version that holds the chunk as it was at `cutoff`: a version stored at time T is how the chunk looked until T, so it
+/// is the oldest one stored at or after the cutoff. None when the chunk has not changed since then.
+fn history_pick(versions: &[u64], cutoff: u64) -> Option<u64> {
+    versions.iter().copied().filter(|&t| t >= cutoff).min()
+}
+
+fn history_pack(bytes: &[u8]) -> Vec<u8> {
+    use std::io::Write;
+    let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+    if enc.write_all(bytes).is_err() {
+        return Vec::new();
+    }
+    enc.finish().unwrap_or_default()
+}
+
+fn history_unpack(bytes: &[u8]) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let mut out = Vec::new();
+    flate2::read::ZlibDecoder::new(bytes).read_to_end(&mut out).ok()?;
+    Some(out)
+}
+
 pub struct SaveDir {
     pub root: PathBuf,
     regions: Arc<RegionCache>,
@@ -2109,6 +2167,113 @@ impl SaveDir {
         };
         read_region_record(&self.root, cache, folder, x, z).ok()?
     }
+    /// Before these chunks are overwritten, their old versions go to the world's history: kept when the newest
+    /// version is old enough and the history has room. The old versions are read now (the write that follows replaces
+    /// them); packing and writing them is done on a thread of its own.
+    fn history_keep(&self, chunks: impl IntoIterator<Item = (i32, i32)>) {
+        if HISTORY_BYTES.load(Ordering::Relaxed) >= HISTORY_LIMIT {
+            return;
+        }
+        let now = history_now();
+        let mut items: Vec<(PathBuf, u64, Vec<u64>, NamedTag)> = Vec::new();
+        for (x, z) in chunks {
+            let dir = self.history_dir(x, z);
+            let versions = history_versions(&dir);
+            if versions.first().is_some_and(|newest| now.saturating_sub(*newest) < HISTORY_GAP_SECS) {
+                continue;
+            }
+            if let Some(old) = self.read_record("region", x, z) {
+                items.push((dir, now, versions, old));
+            }
+        }
+        if items.is_empty() {
+            return;
+        }
+        let spawned = std::thread::Builder::new().name("Belumi world history".into()).spawn(move || {
+            for (dir, now, versions, old) in items {
+                let Ok(bytes) = nbt::write_named(&old, Limits::saved()) else { continue };
+                let packed = history_pack(&bytes);
+                if fs::create_dir_all(&dir).is_err() || fs::write(dir.join(format!("{now}.z")), &packed).is_err() {
+                    continue;
+                }
+                HISTORY_BYTES.fetch_add(packed.len() as u64, Ordering::Relaxed);
+                // Past the number of versions kept, the oldest go.
+                for gone in versions.iter().skip(HISTORY_KEEP - 1) {
+                    let path = dir.join(format!("{gone}.z"));
+                    let len = fs::metadata(&path).map_or(0, |m| m.len());
+                    if fs::remove_file(path).is_ok() {
+                        HISTORY_BYTES.store(HISTORY_BYTES.load(Ordering::Relaxed).saturating_sub(len), Ordering::Relaxed);
+                    }
+                }
+            }
+        });
+        if let Err(e) = spawned {
+            log::warn!("Belumi: no thread for the world history ({e})");
+        }
+    }
+
+    fn history_dir(&self, x: i32, z: i32) -> PathBuf {
+        self.root.join(HISTORY_DIR).join(format!("{x}.{z}"))
+    }
+
+    /// How many chunks have history, how many versions that is and the oldest version's time.
+    pub fn history_summary(&self) -> (usize, usize, Option<u64>) {
+        let Ok(entries) = fs::read_dir(self.root.join(HISTORY_DIR)) else { return (0, 0, None) };
+        let (mut chunks, mut versions, mut oldest) = (0, 0, None::<u64>);
+        for e in entries.flatten() {
+            let v = history_versions(&e.path());
+            if v.is_empty() {
+                continue;
+            }
+            chunks += 1;
+            versions += v.len();
+            oldest = Some(oldest.map_or(*v.last().unwrap_or(&0), |o| o.min(*v.last().unwrap_or(&0))));
+        }
+        (chunks, versions, oldest)
+    }
+
+    /// Asks for these chunks to go back to how they were `minutes` ago, when this dimension loads next (a world that
+    /// is open keeps the chunks in memory). Returns how many of them have a version to go back to.
+    pub fn history_request(&self, chunks: &[(i32, i32)], minutes: u64) -> Result<usize> {
+        let cutoff = history_now().saturating_sub(minutes * 60);
+        let usable: Vec<(i32, i32)> = chunks
+            .iter()
+            .copied()
+            .filter(|&(x, z)| history_pick(&history_versions(&self.history_dir(x, z)), cutoff).is_some())
+            .collect();
+        let json = serde_json::json!({ "cutoff": cutoff, "chunks": usable });
+        fs::create_dir_all(&self.root)?;
+        fs::write(self.root.join(ROLLBACK_FILE), json.to_string())?;
+        Ok(usable.len())
+    }
+
+    /// Applies a rollback asked for earlier (`history_request`), before the first chunk of this dimension loads. Each chunk
+    /// takes the version it had at the asked time; the version it replaces is kept in the history, so a rollback can be
+    /// undone. Returns how many chunks were restored.
+    pub fn history_apply_pending(&self) -> usize {
+        let path = self.root.join(ROLLBACK_FILE);
+        let Some(text) = fs::read_to_string(&path).ok() else { return 0 };
+        let _ = fs::remove_file(&path);
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else { return 0 };
+        let cutoff = value["cutoff"].as_u64().unwrap_or(0);
+        let chunks: Vec<(i32, i32)> = value["chunks"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|c| Some((c.get(0)?.as_i64()? as i32, c.get(1)?.as_i64()? as i32))).collect())
+            .unwrap_or_default();
+        let mut restored = 0;
+        for (x, z) in chunks {
+            let dir = self.history_dir(x, z);
+            let Some(at) = history_pick(&history_versions(&dir), cutoff) else { continue };
+            let Some(bytes) = fs::read(dir.join(format!("{at}.z"))).ok().and_then(|b| history_unpack(&b)) else { continue };
+            let Ok((tag, _)) = nbt::read_named(&bytes, Limits::saved()) else { continue };
+            if self.write_records("region", vec![((x, z), Some(tag))], false).is_ok() {
+                restored += 1;
+            }
+        }
+        let _ = self.queue(Folder::Region, Vec::new(), true);
+        restored
+    }
+
     pub fn load(&self, x: i32, z: i32, registry: &BlockRegistry, biomes: &Biomes) -> Option<Chunk> {
         let root = self.read_record("region", x, z)?;
         let tables = self.tables.get().map(|t| &**t);
@@ -2164,6 +2329,9 @@ impl SaveDir {
         records: Vec<((i32, i32), Option<NamedTag>)>,
         wait: bool,
     ) -> Result<()> {
+        if folder == "region" && history_enabled() {
+            self.history_keep(records.iter().filter(|(_, tag)| tag.is_some()).map(|(k, _)| *k));
+        }
         let records = records
             .into_iter()
             .map(|(k, t)| (k, t.map_or(Record::Delete, |t| Record::Tag(Arc::new(t)))))
@@ -2349,6 +2517,9 @@ impl SaveDir {
             tables: self.tables.get().cloned(),
             shape: self.shape,
         });
+        if history_enabled() {
+            self.history_keep(chunks.iter().map(|c| (c.x, c.z)));
+        }
         let records = chunks
             .iter()
             .map(|c| ((c.x, c.z), Record::Chunk(c.clone(), encoding.clone())))
@@ -4241,6 +4412,82 @@ impl<G: ChunkGenerator> ChunkGenerator for Persistent<G> {
     }
     fn finish(&self, proto: crate::streaming::Proto) -> Chunk {
         self.inner.finish(proto)
+    }
+}
+
+#[cfg(test)]
+mod history_tests {
+    use super::*;
+
+    #[test]
+    fn a_version_is_picked_by_the_time_asked_for() {
+        // Stored at 100, 200 and 300 (newest first): the chunk was in the 200 version between 100 and 200.
+        let v = [300, 200, 100];
+        assert_eq!(history_pick(&v, 150), Some(200));
+        assert_eq!(history_pick(&v, 200), Some(200));
+        assert_eq!(history_pick(&v, 50), Some(100));
+        assert_eq!(history_pick(&v, 301), None, "unchanged since: nothing to go back to");
+        assert_eq!(history_pick(&[], 0), None);
+    }
+
+    fn tag(marker: i32) -> NamedTag {
+        let mut c = Compound::new();
+        c.insert("marker".into(), Tag::Int(marker));
+        NamedTag { name: JavaString::from(""), tag: Tag::Compound(c) }
+    }
+
+    fn marker(t: &NamedTag) -> i32 {
+        match t.tag.get("marker") {
+            Some(Tag::Int(v)) => *v,
+            _ => -1,
+        }
+    }
+
+    #[test]
+    fn an_overwritten_chunk_goes_to_the_history_and_a_rollback_brings_it_back() {
+        let dir = std::env::temp_dir().join(format!("belumi-history-flow-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let save = SaveDir::new(dir.clone(), LevelShape::OVERWORLD);
+        save.write_records("region", vec![((3, 4), Some(tag(1)))], true).unwrap();
+        assert!(history_versions(&save.history_dir(3, 4)).is_empty(), "the first write replaces nothing");
+        save.write_records("region", vec![((3, 4), Some(tag(2)))], true).unwrap();
+        for _ in 0..200 {
+            if !history_versions(&save.history_dir(3, 4)).is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(history_versions(&save.history_dir(3, 4)).len(), 1);
+        assert_eq!(save.read_record("region", 3, 4).map(|t| marker(&t)), Some(2));
+        // A rollback to "a minute ago" is asked for: the chunk keeps its marker until the dimension loads again.
+        assert_eq!(save.history_request(&[(3, 4), (9, 9)], 1).unwrap(), 1, "the chunk without history does not count");
+        assert_eq!(save.read_record("region", 3, 4).map(|t| marker(&t)), Some(2));
+        let reopened = SaveDir::new(dir.clone(), LevelShape::OVERWORLD);
+        assert_eq!(reopened.history_apply_pending(), 1);
+        assert_eq!(reopened.read_record("region", 3, 4).map(|t| marker(&t)), Some(1), "back to the first version");
+        assert!(!dir.join(ROLLBACK_FILE).exists(), "the request is used up");
+        assert_eq!(reopened.history_apply_pending(), 0);
+        let (chunks, versions, oldest) = reopened.history_summary();
+        assert_eq!((chunks, versions >= 1, oldest.is_some()), (1, true, true));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_packed_version_reads_back() {
+        let data: Vec<u8> = (0..3000u32).map(|i| (i % 11) as u8).collect();
+        assert_eq!(history_unpack(&history_pack(&data)), Some(data));
+    }
+
+    #[test]
+    fn the_versions_of_a_folder_are_listed_newest_first_and_junk_is_ignored() {
+        let dir = std::env::temp_dir().join(format!("belumi-history-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        for name in ["10.z", "30.z", "20.z", "notes.txt", "x.z"] {
+            fs::write(dir.join(name), b"x").unwrap();
+        }
+        assert_eq!(history_versions(&dir), vec![30, 20, 10]);
+        let _ = fs::remove_dir_all(&dir);
     }
 }
 
