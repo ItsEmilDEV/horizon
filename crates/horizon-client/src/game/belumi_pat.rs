@@ -10,7 +10,7 @@ use std::{collections::HashMap, time::{Duration, Instant}};
 /// How far you can reach a creature to pat it (as for hitting it).
 const REACH: f64 = 3.0;
 /// One squash and stretch.
-pub(super) const PERIOD: f32 = 1.2;
+pub(super) const PERIOD: f32 = 0.5;
 /// What a pat looks like for one kind of creature. Every field is optional in `belumi-patpat.json`: what a kind does not say
 /// it takes from `default`, and that from these values.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
@@ -40,7 +40,7 @@ pub(super) struct Resolved {
 
 impl Default for Resolved {
     fn default() -> Self {
-        Self { strength: 1.0, period: PERIOD, hearts: 1.8, sound: "auto".into(), volume: 0.5 }
+        Self { strength: 1.0, period: PERIOD, hearts: 2.5, sound: "auto".into(), volume: 0.5 }
     }
 }
 
@@ -65,7 +65,7 @@ impl StyleFile {
         let base = Resolved::default();
         Resolved {
             strength: pick(own.strength, self.default.strength, base.strength).clamp(0.0, 2.0),
-            period: pick(own.period, self.default.period, base.period).clamp(0.4, 4.0),
+            period: pick(own.period, self.default.period, base.period).clamp(0.2, 4.0),
             hearts: pick(own.hearts, self.default.hearts, base.hearts).clamp(0.0, 10.0),
             sound: own.sound.or_else(|| self.default.sound.clone()).unwrap_or(base.sound),
             volume: pick(own.volume, self.default.volume, base.volume).clamp(0.0, 1.0),
@@ -74,17 +74,20 @@ impl StyleFile {
 }
 
 /// How long a pat takes to reach full strength and to fade after it ended.
-const RAMP_IN: f32 = 0.25;
-const RAMP_OUT: f32 = 0.35;
-const SWING_EVERY: Duration = Duration::from_millis(600);
-const SOUND_EVERY: Duration = Duration::from_millis(2600);
+const RAMP_IN: f32 = 0.05;
+const RAMP_OUT: f32 = 0.22;
+/// The least time between two strokes (of the same creature), so clicking fast strokes fast but never machine-gun loud.
+const STROKE_MIN: Duration = Duration::from_millis(130);
 
-/// The squash of a pat `seconds` after it started, 0 to 1: a slow wave, eased in; `faded` seconds after it ended it fades out.
+/// The squash of a pat `seconds` after it started, 0 to 1: one stroke per period, pressed in and sprung back, with a little rebound; `faded` seconds after it ended it fades out.
 pub(super) fn amplitude(seconds: f32, ended: Option<f32>, period: f32) -> f32 {
-    let wave = 0.5 - 0.5 * (std::f32::consts::TAU * seconds / period.max(0.1)).cos();
+    let phase = (seconds / period.max(0.1)).fract();
+    let wave = 0.5 - 0.5 * (std::f32::consts::TAU * phase).cos();
+    // A soft rebound on the way back up, so the body springs instead of sinking and rising like a sine.
+    let wave = wave * (1.0 + 0.18 * (std::f32::consts::TAU * phase * 2.0).sin().max(0.0) * (1.0 - phase));
     let rise = (seconds / RAMP_IN).clamp(0.0, 1.0);
     let fade = ended.map_or(1.0, |e| (1.0 - e / RAMP_OUT).clamp(0.0, 1.0));
-    wave * rise * fade
+    (wave * rise * fade).clamp(0.0, 1.0)
 }
 
 /// Whether a click is a pat: the mode is on, Shift is down, and the hand is empty (or any hand may pat).
@@ -97,14 +100,22 @@ struct Pat {
     started: Instant,
     ended: Option<Instant>,
     hearts: Instant,
-    swing: Instant,
-    sound: Instant,
+    /// When the last stroke began (the arm swings and the sound plays with each stroke).
+    stroke: Instant,
+    strokes: u32,
 }
 
 impl Pat {
-    fn new(now: Instant) -> Self {
+    /// A new pat; one that follows a fast click on the same creature keeps the stroke count and spacing.
+    fn new(now: Instant, prev: Option<&Pat>) -> Self {
         let past = now.checked_sub(Duration::from_secs(10)).unwrap_or(now);
-        Self { started: now, ended: None, hearts: past, swing: past, sound: now }
+        Self {
+            started: now,
+            ended: None,
+            hearts: prev.map_or(past, |p| p.hearts),
+            stroke: prev.map_or(past, |p| p.stroke),
+            strokes: prev.map_or(0, |p| p.strokes),
+        }
     }
     fn seconds(&self, now: Instant) -> (f32, Option<f32>) {
         let t = now.duration_since(self.started).as_secs_f32();
@@ -207,7 +218,8 @@ impl Game<'_> {
                 self.belumi_pat_tell(old, false);
             }
             if let Some(id) = target {
-                self.belumi_pats.active.insert(id, Pat::new(now));
+                let fresh = Pat::new(now, self.belumi_pats.active.get(&id));
+                self.belumi_pats.active.insert(id, fresh);
                 self.belumi_pats.mine = Some(id);
                 self.belumi_pat_tell(id, true);
             }
@@ -237,19 +249,18 @@ impl Game<'_> {
             if p.ended.is_some() {
                 continue;
             }
-            let (spawn_hearts, swing, sound) = (
-                hearts_on && now.duration_since(p.hearts) >= hearts_every,
-                mine && now.duration_since(p.swing) >= SWING_EVERY,
-                sound_on && now.duration_since(p.sound) >= SOUND_EVERY,
-            );
+            let since = now.duration_since(p.stroke);
+            let fresh = now.duration_since(p.started).as_secs_f32() < 0.05;
+            let stroke = since >= STROKE_MIN && (fresh || since.as_secs_f32() >= style.period);
+            let spawn_hearts = hearts_on && (now.duration_since(p.hearts) >= hearts_every || (stroke && now.duration_since(p.hearts) >= STROKE_MIN * 2));
+            let (swing, sound) = (mine && stroke, sound_on && stroke);
+            let nth = p.strokes;
             if spawn_hearts {
                 p.hearts = now;
             }
-            if swing {
-                p.swing = now;
-            }
-            if sound {
-                p.sound = now;
+            if stroke {
+                p.stroke = now;
+                p.strokes += 1;
             }
             if spawn_hearts {
                 let count = 1;
@@ -264,8 +275,16 @@ impl Game<'_> {
             if swing {
                 self.swing_arm();
             }
-            if sound && let Some(event) = self.pat_sound_for(id, &style.sound) {
-                self.audio.play_unshared(&event, Some(at), style.volume, 1.15);
+            if sound {
+                // Every stroke is a soft rub with a little changing pitch; now and then the creature answers in its own voice.
+                let r = self.particles.level_random().next_double() as f32;
+                let rub = if style.sound == "auto" || style.sound.is_empty() { Some("minecraft:block.wool.hit".to_owned()) } else { None };
+                if let Some(event) = rub {
+                    self.audio.play_unshared(&event, Some(at), style.volume * 0.7, 1.25 + r * 0.35);
+                }
+                if nth % 3 == 1 && let Some(event) = self.pat_sound_for(id, &style.sound) {
+                    self.audio.play_unshared(&event, Some(at), style.volume * 0.6, 1.2 + r * 0.2);
+                }
             }
         }
         for id in done {
@@ -346,7 +365,10 @@ impl Game<'_> {
     pub(super) fn belumi_pat_remote(&mut self, id: u32, on: bool) {
         let now = Instant::now();
         if on {
-            self.belumi_pats.active.entry(id).or_insert_with(|| Pat::new(now));
+            if !self.belumi_pats.active.get(&id).is_some_and(|p| p.ended.is_none()) {
+                let fresh = Pat::new(now, self.belumi_pats.active.get(&id));
+                self.belumi_pats.active.insert(id, fresh);
+            }
         } else if let Some(p) = self.belumi_pats.active.get_mut(&id)
             && self.belumi_pats.mine != Some(id)
         {
@@ -365,7 +387,7 @@ mod tests {
         // Half a period in, the wave is at its height (and the ramp is long done).
         assert!((amplitude(PERIOD / 2.0, None, PERIOD) - 1.0).abs() < 1e-3);
         assert!(amplitude(0.05, None, PERIOD) < amplitude(0.2, None, PERIOD) + 1.0, "eased in");
-        assert!(amplitude(0.1, None, PERIOD) < 0.2, "the first moments are gentle");
+        assert!(amplitude(0.02, None, PERIOD) < 0.1, "a stroke starts gently");
         assert!((amplitude(PERIOD, None, PERIOD)).abs() < 1e-3, "a full period is back at rest");
         // After the end it fades to nothing.
         let half = amplitude(PERIOD / 2.0, Some(RAMP_OUT / 2.0), PERIOD);
@@ -410,7 +432,7 @@ mod tests {
     fn style_values_are_kept_in_range_and_bad_files_are_ignored() {
         let file = StyleFile::parse(r#"{"*": {}, "minecraft:cow": {"strength": 99, "period": 0.001, "hearts": -4, "volume": 7}}"#).unwrap();
         let cow = file.resolve("minecraft:cow");
-        assert_eq!((cow.strength, cow.period, cow.hearts, cow.volume), (2.0, 0.4, 0.0, 1.0));
+        assert_eq!((cow.strength, cow.period, cow.hearts, cow.volume), (2.0, 0.2, 0.0, 1.0));
         assert!(StyleFile::parse("not json").is_none());
         assert!(StyleFile::parse(r#"{"minecraft:cow": {"strength": "a lot"}}"#).is_none());
     }
@@ -442,7 +464,7 @@ mod tests {
     #[test]
     fn a_pat_that_ended_is_over_after_the_fade() {
         let t0 = Instant::now();
-        let mut p = Pat::new(t0);
+        let mut p = Pat::new(t0, None);
         assert!(!p.over(t0));
         p.ended = Some(t0);
         assert!(!p.over(t0 + Duration::from_millis(100)));
